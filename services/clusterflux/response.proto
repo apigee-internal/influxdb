@@ -1,0 +1,8 @@
+package cflux;
+
+message ClusterResponse {
+  required bool Success = 1;
+  required string Version = 2;
+  optional string Message = 3;
+  optional string Data = 4;
+}
