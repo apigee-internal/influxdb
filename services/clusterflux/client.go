@@ -1,12 +1,25 @@
 package cflux
 
 import (
+	"bytes"
+	"errors"
 	"io"
+	"io/ioutil"
+	"math"
+	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
+	"github.com/gogo/protobuf/proto"
 	"github.com/influxdata/influxdb/influxql"
 	"github.com/influxdata/influxdb/services/meta"
+	"github.com/spf13/viper"
 )
+
+// VERSION tracks current version of the cluster
+var VERSION int
+var FAIL_ATTEMPTS int
 
 // Client is used as a wrapper on meta client to execute
 // commands on and read data from meta service cluster.
@@ -16,6 +29,10 @@ type Client struct {
 
 // NewClient returns a new *Client.
 func NewClient(config *meta.Config) *Client {
+	viper.SetDefault("CFLUX_ENDPOINT", "localhost:8000")
+	viper.SetDefault("CLUSTER", "default")
+	VERSION = 0
+	FAIL_ATTEMPTS = 0
 	return &Client{
 		meta.NewClient(config),
 	}
@@ -52,13 +69,91 @@ func (c *Client) Databases() []meta.DatabaseInfo {
 }
 
 // CreateDatabase creates a database or returns it if it already exists
-// TODO: protobuf
 func (c *Client) CreateDatabase(name string) (*meta.DatabaseInfo, error) {
 	db, err := c.Client.CreateDatabase(name)
-	// if err != nil {
-	// 	retrun db, err
-	// }
+	if err != nil {
+		return db, err
+	}
+	_, err = c.postToCflux(viper.GetString("CLUSTER"), name)
+	if err != nil {
+		if strings.Contains(err.Error(), "Retry") {
+			c.CreateDatabase(name)
+		}
+		// should I delete the created database or retry? DB could be inconsistent
+		c.Client.DropDatabase(name)
+	}
 	return db, err
+}
+
+// pass in function. copy Data, do operation, revert to snapshot on failure
+// use defer
+// goto err handler
+func (c *Client) postToCflux(cluster string, dbName string) (ClusterResponse, error) {
+	var req *http.Response
+	cdata := c.Data()
+	response := &ClusterResponse{}
+	// if err return err
+	// revert to old snapshot and return err
+	data, err := (&cdata).MarshalBinary()
+	if err != nil {
+		if FAIL_ATTEMPTS < 5 {
+			FAIL_ATTEMPTS = FAIL_ATTEMPTS + 1
+			c.postToCflux(cluster, dbName)
+		}
+		FAIL_ATTEMPTS = 0
+		// Should/Shouldn't we drop the local copy if failed to put in cluster.
+		// move it to the caller (independent of who is calling)
+		c.Client.DropDatabase(dbName)
+		return *response, err
+	}
+	url := viper.GetString("CFLUX_ENDPOINT") + "/" + cluster + "/" + strconv.Itoa(VERSION)
+	// think fn programming
+	for attempt := 1; attempt < 6; attempt++ {
+		req, err = http.Post(url, "", bytes.NewBuffer(data))
+		if err == nil {
+			break
+		}
+		backoff := (math.Pow(2, float64(attempt)) - 1) / 2
+		time.Sleep(time.Duration(backoff) * time.Second)
+	}
+	if err != nil {
+		// Should/Shouldn't we drop the local copy if failed to put in cluster.
+		c.Client.DropDatabase(dbName)
+		return *response, errors.New("Error in posting to clusterflux. " + err.Error())
+	}
+	resp, err := ioutil.ReadAll(req.Body)
+	if err != nil {
+		// revert to snapshot and err out
+		c.Client.DropDatabase(dbName)
+		return *response, errors.New("ioutil.ReadAll failed: " + err.Error())
+		// retry?
+	}
+	err = proto.Unmarshal(resp, response)
+	if err != nil {
+		c.Client.DropDatabase(dbName)
+		return *response, errors.New("Failed unmarshaling response from cluster: " + err.Error())
+		// return *response, errors.New("Retry - prooto.unmarshal failed: " + err.Error())
+	}
+	ver, err := strconv.Atoi(response.GetVersion())
+	if err != nil {
+		// revert to snapshot and err out
+		c.Client.DropDatabase(dbName)
+		return *response, errors.New("Failed while converting string to integer: " + err.Error())
+	}
+	if !*response.Success {
+		if ver > VERSION {
+			err = (&cdata).UnmarshalBinary([]byte(response.GetData()))
+			if err != nil {
+				c.Client.DropDatabase(dbName)
+				return *response, errors.New("Failed unmarshaling response Data from cluster: " + err.Error())
+			}
+			return *response, errors.New("Retry on the updated Data")
+		}
+		c.Client.DropDatabase(dbName)
+		return *response, errors.New(response.GetMessage())
+	}
+	VERSION = ver
+	return *response, nil
 }
 
 // CreateDatabaseWithRetentionPolicy creates a database with the specified retention policy.
