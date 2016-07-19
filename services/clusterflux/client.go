@@ -1,12 +1,23 @@
 package cflux
 
 import (
+	"bytes"
+	"errors"
 	"io"
+	"io/ioutil"
+	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
+	"github.com/gogo/protobuf/proto"
 	"github.com/influxdata/influxdb/influxql"
 	"github.com/influxdata/influxdb/services/meta"
+	"github.com/spf13/viper"
 )
+
+// VERSION tracks current version of the cluster
+var VERSION int
 
 // Client is used as a wrapper on meta client to execute
 // commands on and read data from meta service cluster.
@@ -16,6 +27,9 @@ type Client struct {
 
 // NewClient returns a new *Client.
 func NewClient(config *meta.Config) *Client {
+	viper.SetDefault("CFLUX_ENDPOINT", "localhost:8000")
+	viper.SetDefault("CLUSTER", "default")
+	VERSION = 0
 	return &Client{
 		meta.NewClient(config),
 	}
@@ -52,13 +66,54 @@ func (c *Client) Databases() []meta.DatabaseInfo {
 }
 
 // CreateDatabase creates a database or returns it if it already exists
-// TODO: protobuf
 func (c *Client) CreateDatabase(name string) (*meta.DatabaseInfo, error) {
 	db, err := c.Client.CreateDatabase(name)
-	// if err != nil {
-	// 	retrun db, err
-	// }
+	if err != nil {
+		return db, err
+	}
+	_, err = c.postToCflux(viper.GetString("CLUSTER"))
+	if err != nil {
+		if strings.Contains(err.Error(), "Data Overwritten") {
+			c.CreateDatabase(name)
+		}
+		// should I delete the created database or retry? DB could be inconsistent
+	}
 	return db, err
+}
+
+func (c *Client) postToCflux(cluster string) (ClusterResponse, error) {
+	cdata := c.Data()
+	response := &ClusterResponse{}
+	data, err := (&cdata).MarshalBinary()
+	if err != nil {
+		return *response, err
+	}
+	url := viper.GetString("CFLUX_ENDPOINT") + "/" + cluster + "/" + strconv.Itoa(VERSION)
+	req, err := http.Post(url, "", bytes.NewBuffer(data))
+	if err != nil {
+		return *response, err
+	}
+	resp, err := ioutil.ReadAll(req.Body)
+	if err != nil {
+		return *response, err
+	}
+	proto.Unmarshal(resp, response)
+	ver, err := strconv.Atoi(response.GetVersion())
+	if err != nil {
+		return *response, err
+	}
+	if !*response.Success {
+		if ver > VERSION {
+			err = (&cdata).UnmarshalBinary([]byte(response.GetData()))
+			if err != nil {
+				return *response, err
+			}
+			return *response, errors.New("Data Overwritten")
+		}
+		return *response, errors.New(response.GetMessage())
+	}
+	VERSION = ver
+	return *response, nil
 }
 
 // CreateDatabaseWithRetentionPolicy creates a database with the specified retention policy.
