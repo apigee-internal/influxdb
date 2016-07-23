@@ -383,18 +383,11 @@ func (c *Client) ModifyAndSync(f func(c *Client) (interface{}, error)) (interfac
 
 		// if response is conflict, try to reset local data to receied data
 		if response.Status == http.StatusConflict {
-			tempData := meta.Data{}
-			err = (&tempData).UnmarshalBinary(response.Body)
+			lastSnapshot, err = c.updateData(response)
 			if err != nil {
 				break
 			}
-			err = c.SetData(&tempData)
-			if err != nil {
-				break
-			}
-			Version = response.Version
 			lastVersion = response.Version
-			lastSnapshot = tempData
 		} else if response.Status == http.StatusOK {
 			// success!
 			Version = response.Version
@@ -414,6 +407,21 @@ func (c *Client) ModifyAndSync(f func(c *Client) (interface{}, error)) (interfac
 	return nil, err
 }
 
+// updateData assumes the caller takes care of locks
+func (c *Client) updateData(response ClusterResponse) (meta.Data, error) {
+	tempData := meta.Data{}
+	err := (&tempData).UnmarshalBinary(response.Body)
+	if err != nil {
+		return meta.Data{}, err
+	}
+	err = c.SetData(&tempData)
+	if err != nil {
+		return meta.Data{}, err
+	}
+	Version = response.Version
+	return tempData, nil
+}
+
 func (c *Client) postToCflux(cluster string) (ClusterResponse, error) {
 	url := viper.GetString("CFLUX_ENDPOINT") + "/" + url.QueryEscape(cluster) + "/" + Version
 	cdata := c.Data()
@@ -431,6 +439,50 @@ func (c *Client) postToCflux(cluster string) (ClusterResponse, error) {
 		return ClusterResponse{}, err
 	}
 	return response, nil
+}
+
+func (c *Client) SyncWithCluster(cluster string, done chan bool, ch chan error) {
+	exit := false
+	for {
+		err := c.sync(cluster)
+		if err != nil {
+			ch <- err
+		}
+		// Need to test if this works. Should work ideally! :P
+		select {
+		case exit = <-done:
+		default:
+		}
+		if exit {
+			break
+		}
+	}
+}
+
+func (c *Client) sync(cluster string) error {
+	url := viper.GetString("CFLUX_ENDPOINT") + "/" + url.QueryEscape(cluster) + "/" + Version
+	req, err := http.NewRequest("GET", url, nil)
+
+	resp, err := c.expBackoffRequest(cluster, *req)
+	if err != nil {
+		return err
+	}
+	response, err := c.readResponse(resp)
+	if err != nil {
+		return err
+	}
+	switch response.Status {
+	case http.StatusOK:
+		mutex.Lock()
+		_, err = c.updateData(response)
+		mutex.Unlock()
+		if err != nil {
+			return err
+		}
+	case http.StatusInternalServerError:
+		return errors.New(string(response.Body))
+	}
+	return nil
 }
 
 func (c *Client) expBackoffRequest(cluster string, req http.Request) (*http.Response, error) {
