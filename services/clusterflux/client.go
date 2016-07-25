@@ -16,13 +16,14 @@ import (
 	"github.com/spf13/viper"
 )
 
-// Version tracks current version of the cluster
-var Version string
-
 // Client is used as a wrapper on meta client to execute
 // commands on and read data from meta service cluster.
 type Client struct {
 	*meta.Client
+	// Version tracks current version of the cluster
+	dataVersion string
+	// mutex is used to lock write (local and to cluster)
+	mutex *sync.Mutex
 }
 
 type ClusterResponse struct {
@@ -35,9 +36,10 @@ type ClusterResponse struct {
 func NewClient(config *meta.Config) *Client {
 	viper.SetDefault("CFLUX_ENDPOINT", "localhost:8000")
 	viper.SetDefault("CLUSTER", "default")
-	Version = "0"
 	return &Client{
-		meta.NewClient(config),
+		Client:      meta.NewClient(config),
+		dataVersion: "0",
+		mutex:       &sync.Mutex{},
 	}
 }
 
@@ -352,18 +354,15 @@ func (c *Client) Load() error {
 	return c.Client.Load()
 }
 
-// mutex is used to lock write (local and to cluster)
-var mutex = &sync.Mutex{}
-
 // ModifyAndSync foo
 func (c *Client) ModifyAndSync(f func(c *Client) (interface{}, error)) (interface{}, error) {
-	mutex.Lock()
-	defer mutex.Unlock()
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
 
 	var val interface{}
 	var err error
 
-	lastVersion := Version
+	lastVersion := c.dataVersion
 	lastSnapshot := c.Data()
 	for i := 0; i < 5; i++ {
 		// apply function that modifies current snapshot
@@ -390,7 +389,7 @@ func (c *Client) ModifyAndSync(f func(c *Client) (interface{}, error)) (interfac
 			lastVersion = response.Version
 		} else if response.Status == http.StatusOK {
 			// success!
-			Version = response.Version
+			c.dataVersion = response.Version
 			return val, nil
 		} else {
 			// response status is bad (e.g. 500)
@@ -400,7 +399,7 @@ func (c *Client) ModifyAndSync(f func(c *Client) (interface{}, error)) (interfac
 	}
 
 	// rollbak on error
-	Version = lastVersion
+	c.dataVersion = lastVersion
 	if err2 := c.SetData(&lastSnapshot); err2 != nil {
 		return nil, err2
 	}
@@ -418,12 +417,12 @@ func (c *Client) updateData(response ClusterResponse) (meta.Data, error) {
 	if err != nil {
 		return meta.Data{}, err
 	}
-	Version = response.Version
+	c.dataVersion = response.Version
 	return tempData, nil
 }
 
 func (c *Client) postToCflux(cluster string) (ClusterResponse, error) {
-	url := viper.GetString("CFLUX_ENDPOINT") + "/" + url.QueryEscape(cluster) + "/" + Version
+	url := viper.GetString("CFLUX_ENDPOINT") + "/" + url.QueryEscape(cluster) + "/" + c.dataVersion
 	cdata := c.Data()
 	data, err := (&cdata).MarshalBinary()
 	if err != nil {
@@ -451,6 +450,7 @@ func (c *Client) SyncWithCluster(cluster string, done chan bool, ch chan error) 
 		// Need to test if this works. Should work ideally! :P
 		select {
 		case exit = <-done:
+			return
 		default:
 		}
 		if exit {
@@ -460,7 +460,7 @@ func (c *Client) SyncWithCluster(cluster string, done chan bool, ch chan error) 
 }
 
 func (c *Client) sync(cluster string) error {
-	url := viper.GetString("CFLUX_ENDPOINT") + "/" + url.QueryEscape(cluster) + "/" + Version
+	url := viper.GetString("CFLUX_ENDPOINT") + "/" + url.QueryEscape(cluster) + "/" + c.dataVersion
 	req, err := http.NewRequest("GET", url, nil)
 
 	resp, err := c.expBackoffRequest(cluster, *req)
@@ -473,9 +473,9 @@ func (c *Client) sync(cluster string) error {
 	}
 	switch response.Status {
 	case http.StatusOK:
-		mutex.Lock()
+		c.mutex.Lock()
 		_, err = c.updateData(response)
-		mutex.Unlock()
+		c.mutex.Unlock()
 		if err != nil {
 			return err
 		}
