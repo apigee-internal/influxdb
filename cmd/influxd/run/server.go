@@ -16,8 +16,8 @@ import (
 	"github.com/influxdata/influxdb/influxql"
 	"github.com/influxdata/influxdb/models"
 	"github.com/influxdata/influxdb/monitor"
+	"github.com/influxdata/influxdb/services/clusterflux"
 	"github.com/influxdata/influxdb/services/copier"
-	"github.com/influxdata/influxdb/services/meta"
 	"github.com/influxdata/influxdb/services/snapshotter"
 	"github.com/influxdata/influxdb/services/subscriber"
 	"github.com/influxdata/influxdb/tcp"
@@ -55,7 +55,7 @@ type Server struct {
 
 	Logger *log.Logger
 
-	MetaClient *meta.Client
+	MetaClient *cflux.Client
 
 	TSDBStore     *tsdb.Store
 	QueryExecutor *influxql.QueryExecutor
@@ -139,7 +139,7 @@ func NewServer(c *Config, buildInfo *BuildInfo) (*Server, error) {
 
 		Logger: log.New(os.Stderr, "", log.LstdFlags),
 
-		MetaClient: meta.NewClient(c.Meta),
+		MetaClient: cflux.NewClient(c.Meta),
 
 		Monitor: monitor.New(c.Monitor),
 
@@ -156,6 +156,8 @@ func NewServer(c *Config, buildInfo *BuildInfo) (*Server, error) {
 	if err := s.MetaClient.Open(); err != nil {
 		return nil, err
 	}
+
+	// go s.startClusterSync()
 
 	s.TSDBStore = tsdb.NewStore(c.Data.Dir)
 	s.TSDBStore.EngineOptions.Config = c.Data
@@ -198,6 +200,16 @@ func NewServer(c *Config, buildInfo *BuildInfo) (*Server, error) {
 	s.Monitor.PointsWriter = (*monitorPointsWriter)(s.PointsWriter)
 	return s, nil
 }
+
+// func (s *Server) startClusterSync() {
+// 	s.Logger.Println("Started listening for cluster changes.")
+// 	done := make(chan struct{})
+// 	errCh := make(chan error)
+// 	s.MetaClient.SyncWithCluster(viper.GetString("CLUSTER"), done, errCh)
+// 	for {
+// 		s.Logger.Println(<-errCh)
+// 	}
+// }
 
 func (s *Server) appendClusterService(c cluster.Config) {
 	srv := cluster.NewService(c)

@@ -8,11 +8,11 @@ import (
 	"path/filepath"
 
 	"github.com/influxdata/influxdb/services/admin"
+	"github.com/influxdata/influxdb/services/clusterflux"
 	"github.com/influxdata/influxdb/services/collectd"
 	"github.com/influxdata/influxdb/services/continuous_querier"
 	"github.com/influxdata/influxdb/services/graphite"
 	"github.com/influxdata/influxdb/services/httpd"
-	"github.com/influxdata/influxdb/services/meta"
 	"github.com/influxdata/influxdb/services/opentsdb"
 	"github.com/influxdata/influxdb/services/precreator"
 	"github.com/influxdata/influxdb/services/retention"
@@ -44,8 +44,8 @@ func (s *Server) appendHTTPDService(c httpd.Config) {
 	}
 	srv := httpd.NewService(c)
 	srv.Handler.MetaClient = s.MetaClient
-	srv.Handler.QueryAuthorizer = meta.NewQueryAuthorizer(s.MetaClient)
-	srv.Handler.WriteAuthorizer = meta.NewWriteAuthorizer(s.MetaClient)
+	srv.Handler.QueryAuthorizer = cflux.NewQueryAuthorizer(s.MetaClient)
+	srv.Handler.WriteAuthorizer = cflux.NewWriteAuthorizer(s.MetaClient)
 	srv.Handler.QueryExecutor = s.QueryExecutor
 	srv.Handler.PointsWriter = s.PointsWriter
 	srv.Handler.Version = s.buildInfo.Version
