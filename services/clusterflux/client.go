@@ -34,7 +34,7 @@ type ClusterResponse struct {
 
 // NewClient returns a new *Client.
 func NewClient(config *meta.Config) *Client {
-	viper.SetDefault("CFLUX_ENDPOINT", "localhost:8000")
+	viper.SetDefault("CFLUX_ENDPOINT", "http://localhost:8000")
 	viper.SetDefault("CLUSTER", "default")
 	return &Client{
 		Client:      meta.NewClient(config),
@@ -79,7 +79,12 @@ func (c *Client) CreateDatabase(name string) (*meta.DatabaseInfo, error) {
 		return c.Client.CreateDatabase(name)
 	}
 	val, err := c.ModifyAndSync(f)
-	return val.(*meta.DatabaseInfo), err
+
+	di, ok := val.(*meta.DatabaseInfo)
+	if !ok {
+		return nil, err
+	}
+	return di, err
 }
 
 // CreateDatabaseWithRetentionPolicy creates a database with the specified retention policy.
@@ -88,7 +93,11 @@ func (c *Client) CreateDatabaseWithRetentionPolicy(name string, rpi *meta.Retent
 		return c.Client.CreateDatabaseWithRetentionPolicy(name, rpi)
 	}
 	val, err := c.ModifyAndSync(f)
-	return val.(*meta.DatabaseInfo), err
+	di, ok := val.(*meta.DatabaseInfo)
+	if !ok {
+		return nil, err
+	}
+	return di, err
 }
 
 // DropDatabase deletes a database.
@@ -106,7 +115,11 @@ func (c *Client) CreateRetentionPolicy(database string, rpi *meta.RetentionPolic
 		return c.Client.CreateRetentionPolicy(database, rpi)
 	}
 	val, err := c.ModifyAndSync(f)
-	return val.(*meta.RetentionPolicyInfo), err
+	rpi, ok := val.(*meta.RetentionPolicyInfo)
+	if !ok {
+		return nil, err
+	}
+	return rpi, err
 }
 
 // RetentionPolicy returns the requested retention policy info.
@@ -157,7 +170,11 @@ func (c *Client) CreateUser(name, password string, admin bool) (*meta.UserInfo, 
 		return c.Client.CreateUser(name, password, admin)
 	}
 	val, err := c.ModifyAndSync(f)
-	return val.(*meta.UserInfo), err
+	ui, ok := val.(*meta.UserInfo)
+	if !ok {
+		return nil, err
+	}
+	return ui, err
 }
 
 // UpdateUser foo
@@ -252,7 +269,11 @@ func (c *Client) CreateShardGroup(database, policy string, timestamp time.Time) 
 		return c.Client.CreateShardGroup(database, policy, timestamp)
 	}
 	val, err := c.ModifyAndSync(f)
-	return val.(*meta.ShardGroupInfo), err
+	sgi, ok := val.(*meta.ShardGroupInfo)
+	if !ok {
+		return nil, err
+	}
+	return sgi, err
 }
 
 // DeleteShardGroup removes a shard group from a database and retention policy by id.
@@ -356,30 +377,25 @@ func (c *Client) Load() error {
 
 // ModifyAndSync foo
 func (c *Client) ModifyAndSync(f func(c *Client) (interface{}, error)) (interface{}, error) {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
-
 	var val interface{}
 	var err error
-
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
 	lastVersion := c.dataVersion
 	lastSnapshot := c.Data()
 	for i := 0; i < 5; i++ {
 		// apply function that modifies current snapshot
 		val, err = f(c)
 		if err != nil {
-			c.SetData(&lastSnapshot)
-			break
+			return nil, err
 		}
 
 		// send modified snapshot to cflux
 		var response ClusterResponse
 		response, err = c.postToCflux(viper.GetString("CLUSTER"))
-
 		if err != nil {
 			break
 		}
-
 		// if response is conflict, try to reset local data to receied data
 		if response.Status == http.StatusConflict {
 			lastSnapshot, err = c.updateData(response)
@@ -397,12 +413,11 @@ func (c *Client) ModifyAndSync(f func(c *Client) (interface{}, error)) (interfac
 			break
 		}
 	}
-
 	// rollbak on error
-	c.dataVersion = lastVersion
-	if err2 := c.SetData(&lastSnapshot); err2 != nil {
-		return nil, err2
+	if err2 := c.Client.SetData(&lastSnapshot); err2 != nil {
+		err = errors.New("Multiple errors happened: 1. " + err2.Error() + ", 2. " + err.Error())
 	}
+	c.dataVersion = lastVersion
 	return nil, err
 }
 
@@ -413,7 +428,9 @@ func (c *Client) updateData(response ClusterResponse) (meta.Data, error) {
 	if err != nil {
 		return meta.Data{}, err
 	}
-	err = c.SetData(&tempData)
+	// c.mutex.Lock()
+	err = c.Client.SetData(&tempData)
+	// c.mutex.Unlock()
 	if err != nil {
 		return meta.Data{}, err
 	}
@@ -422,7 +439,7 @@ func (c *Client) updateData(response ClusterResponse) (meta.Data, error) {
 }
 
 func (c *Client) postToCflux(cluster string) (ClusterResponse, error) {
-	url := viper.GetString("CFLUX_ENDPOINT") + "/" + url.QueryEscape(cluster) + "/" + c.dataVersion
+	url := viper.GetString("CFLUX_ENDPOINT") + "/clusters/" + url.QueryEscape(cluster) + "/versions/" + c.dataVersion
 	cdata := c.Data()
 	data, err := (&cdata).MarshalBinary()
 	if err != nil {
@@ -440,8 +457,8 @@ func (c *Client) postToCflux(cluster string) (ClusterResponse, error) {
 	return response, nil
 }
 
-func (c *Client) SyncWithCluster(cluster string, done chan bool, ch chan error) {
-	exit := false
+// SyncWithCluster called from server.go to start listening for cluster changes
+func (c *Client) SyncWithCluster(cluster string, done chan struct{}, ch chan error) {
 	for {
 		err := c.sync(cluster)
 		if err != nil {
@@ -449,18 +466,15 @@ func (c *Client) SyncWithCluster(cluster string, done chan bool, ch chan error) 
 		}
 		// Need to test if this works. Should work ideally! :P
 		select {
-		case exit = <-done:
+		case <-done:
 			return
 		default:
-		}
-		if exit {
-			break
 		}
 	}
 }
 
 func (c *Client) sync(cluster string) error {
-	url := viper.GetString("CFLUX_ENDPOINT") + "/" + url.QueryEscape(cluster) + "/" + c.dataVersion
+	url := viper.GetString("CFLUX_ENDPOINT") + "/clusters/" + url.QueryEscape(cluster) + "/versions/" + c.dataVersion
 	req, err := http.NewRequest("GET", url, nil)
 
 	resp, err := c.expBackoffRequest(cluster, *req)
@@ -481,6 +495,8 @@ func (c *Client) sync(cluster string) error {
 		}
 	case http.StatusInternalServerError:
 		return errors.New(string(response.Body))
+	case http.StatusGatewayTimeout:
+		return errors.New("No Updates - No new version on remote cluster.")
 	}
 	return nil
 }
@@ -503,7 +519,7 @@ func (c *Client) expBackoffRequest(cluster string, req http.Request) (*http.Resp
 
 func (c *Client) readResponse(resp *http.Response) (ClusterResponse, error) {
 	status := resp.StatusCode
-	version := resp.Header.Get("version")
+	version := resp.Header.Get("Version")
 	respBody, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return ClusterResponse{}, err

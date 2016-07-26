@@ -17,6 +17,7 @@ import (
 	"github.com/influxdata/influxdb/models"
 	"github.com/influxdata/influxdb/monitor"
 	"github.com/influxdata/influxdb/services/admin"
+	"github.com/influxdata/influxdb/services/clusterflux"
 	"github.com/influxdata/influxdb/services/collectd"
 	"github.com/influxdata/influxdb/services/continuous_querier"
 	"github.com/influxdata/influxdb/services/graphite"
@@ -63,7 +64,7 @@ type Server struct {
 
 	Logger *log.Logger
 
-	MetaClient *meta.Client
+	MetaClient *cflux.Client
 
 	TSDBStore     *tsdb.Store
 	QueryExecutor *influxql.QueryExecutor
@@ -145,7 +146,7 @@ func NewServer(c *Config, buildInfo *BuildInfo) (*Server, error) {
 
 		Logger: log.New(os.Stderr, "", log.LstdFlags),
 
-		MetaClient: meta.NewClient(c.Meta),
+		MetaClient: cflux.NewClient(c.Meta),
 
 		reportingDisabled: c.ReportingDisabled,
 
@@ -161,6 +162,8 @@ func NewServer(c *Config, buildInfo *BuildInfo) (*Server, error) {
 	if err := s.MetaClient.Open(); err != nil {
 		return nil, err
 	}
+
+	// go s.startClusterSync()
 
 	s.TSDBStore = tsdb.NewStore(c.Data.Dir)
 	s.TSDBStore.EngineOptions.Config = c.Data
