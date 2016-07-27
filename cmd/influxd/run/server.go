@@ -157,8 +157,6 @@ func NewServer(c *Config, buildInfo *BuildInfo) (*Server, error) {
 		return nil, err
 	}
 
-	// go s.startClusterSync()
-
 	s.TSDBStore = tsdb.NewStore(c.Data.Dir)
 	s.TSDBStore.EngineOptions.Config = c.Data
 
@@ -200,16 +198,6 @@ func NewServer(c *Config, buildInfo *BuildInfo) (*Server, error) {
 	s.Monitor.PointsWriter = (*monitorPointsWriter)(s.PointsWriter)
 	return s, nil
 }
-
-// func (s *Server) startClusterSync() {
-// 	s.Logger.Println("Started listening for cluster changes.")
-// 	done := make(chan struct{})
-// 	errCh := make(chan error)
-// 	s.MetaClient.SyncWithCluster(viper.GetString("CLUSTER"), done, errCh)
-// 	for {
-// 		s.Logger.Println(<-errCh)
-// 	}
-// }
 
 func (s *Server) appendClusterService(c cluster.Config) {
 	srv := cluster.NewService(c)
