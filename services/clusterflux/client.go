@@ -5,9 +5,11 @@ import (
 	"errors"
 	"io"
 	"io/ioutil"
+	"log"
 	"math"
 	"net/http"
 	"net/url"
+	"os"
 	"sync"
 	"time"
 
@@ -23,7 +25,9 @@ type Client struct {
 	// Version tracks current version of the cluster
 	dataVersion string
 	// mutex is used to lock write (local and to cluster)
-	mutex *sync.Mutex
+	mutex    *sync.Mutex
+	logger   *log.Logger
+	pollDone chan struct{}
 }
 
 type ClusterResponse struct {
@@ -40,16 +44,20 @@ func NewClient(config *meta.Config) *Client {
 		Client:      meta.NewClient(config),
 		dataVersion: "0",
 		mutex:       &sync.Mutex{},
+		logger:      log.New(os.Stderr, "[clusterflux] ", log.LstdFlags),
+		pollDone:    make(chan struct{}),
 	}
 }
 
 // Open a connection to a shard service cluster.
 func (c *Client) Open() error {
+	go c.startClusterSync()
 	return c.Client.Open()
 }
 
 // Close the shard service cluster connection.
 func (c *Client) Close() error {
+	go c.stopClusterSync()
 	return c.Client.Close()
 }
 
@@ -366,6 +374,9 @@ func (c *Client) MarshalBinary() ([]byte, error) {
 // SetLogOutput sets the writer to which all logs are written. It must not be
 // called after Open is called.
 func (c *Client) SetLogOutput(w io.Writer) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	c.logger = log.New(w, "[clusterflux] ", log.LstdFlags)
 	c.Client.SetLogOutput(w)
 }
 
@@ -389,9 +400,9 @@ func (c *Client) ModifyAndSync(f func(c *Client) (interface{}, error)) (interfac
 		if err != nil {
 			return nil, err
 		}
-
 		// send modified snapshot to cflux
 		var response ClusterResponse
+		c.logger.Println("Posting to Clusterflux")
 		response, err = c.postToCflux(viper.GetString("CLUSTER"))
 		if err != nil {
 			break
@@ -405,6 +416,7 @@ func (c *Client) ModifyAndSync(f func(c *Client) (interface{}, error)) (interfac
 			lastVersion = response.Version
 		} else if response.Status == http.StatusOK {
 			// success!
+			c.logger.Printf("Successfully updated Clusterflux with local changes. Old Version: %s,New Version: %s.", c.dataVersion, response.Version)
 			c.dataVersion = response.Version
 			return val, nil
 		} else {
@@ -414,7 +426,9 @@ func (c *Client) ModifyAndSync(f func(c *Client) (interface{}, error)) (interfac
 		}
 	}
 	// rollbak on error
+	c.logger.Printf("Failed to update Clusterflux with local changes. Rolling back to version %s.", lastVersion)
 	if err2 := c.Client.SetData(&lastSnapshot); err2 != nil {
+		c.logger.Println("Failed to rollback.")
 		err = errors.New("Multiple errors happened: 1. " + err2.Error() + ", 2. " + err.Error())
 	}
 	c.dataVersion = lastVersion
@@ -434,6 +448,7 @@ func (c *Client) updateData(response ClusterResponse) (meta.Data, error) {
 	if err != nil {
 		return meta.Data{}, err
 	}
+	c.logger.Printf("Updated database from version %s to %s", c.dataVersion, response.Version)
 	c.dataVersion = response.Version
 	return tempData, nil
 }
@@ -457,8 +472,22 @@ func (c *Client) postToCflux(cluster string) (ClusterResponse, error) {
 	return response, nil
 }
 
+func (c *Client) startClusterSync() {
+	c.logger.Printf("Started listening for cluster changes.")
+	errCh := make(chan error)
+	go c.syncWithCluster(viper.GetString("CLUSTER"), errCh)
+	for {
+		c.logger.Println(<-errCh)
+	}
+}
+
+func (c *Client) stopClusterSync() {
+	c.logger.Printf("Stopping listening for cluster changes.")
+	c.pollDone <- struct{}{}
+}
+
 // SyncWithCluster called from server.go to start listening for cluster changes
-func (c *Client) SyncWithCluster(cluster string, done chan struct{}, ch chan error) {
+func (c *Client) syncWithCluster(cluster string, ch chan error) {
 	for {
 		err := c.sync(cluster)
 		if err != nil {
@@ -466,7 +495,7 @@ func (c *Client) SyncWithCluster(cluster string, done chan struct{}, ch chan err
 		}
 		// Need to test if this works. Should work ideally! :P
 		select {
-		case <-done:
+		case <-c.pollDone:
 			return
 		default:
 		}
@@ -477,6 +506,7 @@ func (c *Client) sync(cluster string) error {
 	url := viper.GetString("CFLUX_ENDPOINT") + "/clusters/" + url.QueryEscape(cluster) + "/versions/" + c.dataVersion
 	req, err := http.NewRequest("GET", url, nil)
 
+	c.logger.Println("Polling for updates from Clusterflux.")
 	resp, err := c.expBackoffRequest(cluster, *req)
 	if err != nil {
 		return err
@@ -496,6 +526,7 @@ func (c *Client) sync(cluster string) error {
 	case http.StatusInternalServerError:
 		return errors.New(string(response.Body))
 	case http.StatusGatewayTimeout:
+		c.logger.Println("Update Timeout: No new updates!")
 		return errors.New("No Updates - No new version on remote cluster.")
 	}
 	return nil
@@ -514,6 +545,7 @@ func (c *Client) expBackoffRequest(cluster string, req http.Request) (*http.Resp
 		backoff := (math.Pow(2, float64(attempt)) - 1) / 2
 		time.Sleep(time.Duration(backoff) * time.Second)
 	}
+	c.logger.Printf("Error while connecting to Clusterflux: %s", err.Error())
 	return resp, err
 }
 

@@ -163,8 +163,6 @@ func NewServer(c *Config, buildInfo *BuildInfo) (*Server, error) {
 		return nil, err
 	}
 
-	// go s.startClusterSync()
-
 	s.TSDBStore = tsdb.NewStore(c.Data.Dir)
 	s.TSDBStore.EngineOptions.Config = c.Data
 
