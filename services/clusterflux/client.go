@@ -2,11 +2,13 @@ package cflux
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"io/ioutil"
 	"log"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -25,15 +27,32 @@ type Client struct {
 	// Version tracks current version of the cluster
 	dataVersion string
 	// mutex is used to lock write (local and to cluster)
-	mutex    *sync.Mutex
-	logger   *log.Logger
-	pollDone chan struct{}
+	mutex   *sync.Mutex
+	logger  *log.Logger
+	doneCh  chan struct{}
+	errorCh chan error
 }
 
+// ClusterResponse used to parse response from Clusterflux
 type ClusterResponse struct {
 	Body    []byte
 	Version string
 	Status  int
+}
+
+// Metadata struct used to register influxdb node
+type Metadata struct {
+	IP       string `json:"ip"`
+	Hostname string `json:"hostname"`
+}
+
+// Response used to parse response from Clusterflux for Nodes metadata
+type Response struct {
+	Status  string   `json:"status"`
+	Id      string   `json:"id"`
+	Exp     string   `json:"expirationDate`
+	Message string   `json:"message"`
+	Mdata   Metadata `json:"metadata"`
 }
 
 // NewClient returns a new *Client.
@@ -45,12 +64,17 @@ func NewClient(config *meta.Config) *Client {
 		dataVersion: "0",
 		mutex:       &sync.Mutex{},
 		logger:      log.New(os.Stderr, "[clusterflux] ", log.LstdFlags),
-		pollDone:    make(chan struct{}),
+		doneCh:      make(chan struct{}),
+		errorCh:     make(chan error),
 	}
 }
 
 // Open a connection to a shard service cluster.
 func (c *Client) Open() error {
+	err := c.registerNode()
+	if err != nil {
+		return err
+	}
 	go c.startClusterSync()
 	return c.Client.Open()
 }
@@ -474,28 +498,27 @@ func (c *Client) postToCflux(cluster string) (ClusterResponse, error) {
 
 func (c *Client) startClusterSync() {
 	c.logger.Printf("Started listening for cluster changes.")
-	errCh := make(chan error)
-	go c.syncWithCluster(viper.GetString("CLUSTER"), errCh)
+	go c.syncWithCluster(viper.GetString("CLUSTER"))
 	for {
-		c.logger.Println(<-errCh)
+		c.logger.Println(<-c.errorCh)
 	}
 }
 
 func (c *Client) stopClusterSync() {
 	c.logger.Printf("Stopping listening for cluster changes.")
-	c.pollDone <- struct{}{}
+	c.doneCh <- struct{}{}
 }
 
 // SyncWithCluster called from server.go to start listening for cluster changes
-func (c *Client) syncWithCluster(cluster string, ch chan error) {
+func (c *Client) syncWithCluster(cluster string) {
 	for {
 		err := c.sync(cluster)
 		if err != nil {
-			ch <- err
+			c.errorCh <- err
 		}
 		// Need to test if this works. Should work ideally! :P
 		select {
-		case <-c.pollDone:
+		case <-c.doneCh:
 			return
 		default:
 		}
@@ -540,7 +563,7 @@ func (c *Client) expBackoffRequest(cluster string, req http.Request) (*http.Resp
 	for attempt := 1; attempt < 6; attempt++ {
 		resp, err = client.Do(&req)
 		if err == nil {
-			break
+			return resp, err
 		}
 		backoff := (math.Pow(2, float64(attempt)) - 1) / 2
 		time.Sleep(time.Duration(backoff) * time.Second)
@@ -562,4 +585,59 @@ func (c *Client) readResponse(resp *http.Response) (ClusterResponse, error) {
 		Status:  status,
 	}
 	return response, nil
+}
+
+func (c *Client) registerNode() error {
+	mdata := c.getNodeMetaData()
+	data, err := json.Marshal(mdata)
+	if err != nil {
+		return err
+	}
+	url := viper.GetString("CFLUX_ENDPOINT") + "/nodes"
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(data))
+	resp, err := c.expBackoffRequest(viper.GetString("CLUSTER"), *req)
+	if err != nil {
+		c.logger.Println("Failed to Register InfluxDB on Clusterflux")
+		return err
+	}
+	clusterResp := Response{}
+	json.NewDecoder(resp.Body).Decode(&clusterResp)
+	go c.ping(clusterResp.Id)
+	return nil
+}
+
+func (c *Client) getNodeMetaData() Metadata {
+	hostname, err := os.Hostname()
+	var addrs []net.IP
+	if err == nil {
+		addrs, err = net.LookupIP(hostname)
+	}
+	if err != nil {
+		log.Fatalf("Failed to get Hostname/IP.")
+	}
+
+	var buffer bytes.Buffer
+	for _, addr := range addrs {
+		if ipv4 := addr.To4(); ipv4 != nil {
+			buffer.WriteString(ipv4.String() + ",")
+		}
+	}
+	ip := buffer.String()
+	return Metadata{ip, hostname}
+}
+
+func (c *Client) ping(id string) {
+	var err error
+	for err == nil {
+		time.Sleep(5 * time.Second)
+		url := viper.GetString("CFLUX_ENDPOINT") + "/nodes/" + id
+		req, err := http.NewRequest("PUT", url, nil)
+		resp, err := c.expBackoffRequest(viper.GetString("CLUSTER"), *req)
+		if err != nil {
+			c.logger.Println("Failed to Register InfluxDB on Clusterflux")
+			c.errorCh <- err
+		}
+		clusterResp := Response{}
+		json.NewDecoder(resp.Body).Decode(&clusterResp)
+	}
 }
