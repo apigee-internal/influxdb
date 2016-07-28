@@ -485,7 +485,7 @@ func (c *Client) postToCflux(cluster string) (ClusterResponse, error) {
 		return ClusterResponse{}, err
 	}
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(data))
-	resp, err := c.expBackoffRequest(cluster, *req)
+	resp, err := c.expBackoffRequest(*req)
 	if err != nil {
 		return ClusterResponse{}, err
 	}
@@ -530,7 +530,7 @@ func (c *Client) sync(cluster string) error {
 	req, err := http.NewRequest("GET", url, nil)
 
 	c.logger.Println("Polling for updates from Clusterflux.")
-	resp, err := c.expBackoffRequest(cluster, *req)
+	resp, err := c.expBackoffRequest(*req)
 	if err != nil {
 		return err
 	}
@@ -555,7 +555,7 @@ func (c *Client) sync(cluster string) error {
 	return nil
 }
 
-func (c *Client) expBackoffRequest(cluster string, req http.Request) (*http.Response, error) {
+func (c *Client) expBackoffRequest(req http.Request) (*http.Response, error) {
 	client := &http.Client{}
 	var resp *http.Response
 	var err error
@@ -593,9 +593,9 @@ func (c *Client) registerNode() error {
 	if err != nil {
 		return err
 	}
-	url := viper.GetString("CFLUX_ENDPOINT") + "/nodes"
+	url := viper.GetString("CFLUX_ENDPOINT") + "/nodes/" + viper.GetString("CLUSTER")
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(data))
-	resp, err := c.expBackoffRequest(viper.GetString("CLUSTER"), *req)
+	resp, err := c.expBackoffRequest(*req)
 	if err != nil {
 		c.logger.Println("Failed to Register InfluxDB on Clusterflux")
 		return err
@@ -630,9 +630,9 @@ func (c *Client) ping(id string) {
 	var err error
 	for err == nil {
 		time.Sleep(5 * time.Second)
-		url := viper.GetString("CFLUX_ENDPOINT") + "/nodes/" + id
+		url := viper.GetString("CFLUX_ENDPOINT") + "/nodes/" + viper.GetString("CLUSTER") + "/" + id
 		req, err := http.NewRequest("PUT", url, nil)
-		resp, err := c.expBackoffRequest(viper.GetString("CLUSTER"), *req)
+		resp, err := c.expBackoffRequest(*req)
 		if err != nil {
 			c.logger.Println("Failed to Register InfluxDB on Clusterflux")
 			c.errorCh <- err
