@@ -426,30 +426,32 @@ func (c *Client) updateCfluxData(cluster string, metaOp metaOperation) error {
 		return rollbackOnErr(err)
 	}
 
+	// if update on top of latest version. just update version and return.
 	if resp.Status == http.StatusOK {
-		if err := c.updateCache(resp.Version, resp.Body); err != nil {
-			return rollbackOnErr(err)
-		}
-		return rollbackOnErr(nil)
+		c.dataVersion = resp.Version
+		return nil
 	}
 
+	// if version conflict
+	// 1) set local data and version to  cflux data and cflux version.
+	// 2) error out without rollback. caller retry will update cflux on top of latest snapshot.
 	if resp.Status == http.StatusConflict {
-		if err := c.updateCache(resp.Version, resp.Body); err != nil {
+		var tempData = meta.Data{}
+		err := (&tempData).UnmarshalBinary(data)
+		if err != nil {
 			return rollbackOnErr(err)
 		}
-		return rollbackOnErr(fmt.Errorf("Version conflict with Clusterflux."))
+		if err := c.updateCache(resp.Version, tempData); err != nil {
+			return rollbackOnErr(err)
+		}
+		return fmt.Errorf("Version mismatch with ClusterFlux. Current version=%v, ClusterFluxVersion=%v. retrying on top of latest snapshot.", c.dataVersion, resp.Version)
 	}
 	return rollbackOnErr(fmt.Errorf("HTTP request failed. Status Code:%v, Message:%v", resp.Status, string(resp.Body)))
 }
 
 // updateCache updates the local cache data. Caller of this function will lock the update Transaction.
-func (c *Client) updateCache(version string, data []byte) error {
-	var tempData = meta.Data{}
-	err := (&tempData).UnmarshalBinary(data)
-	if err != nil {
-		return err
-	}
-	err = c.Client.SetData(&tempData)
+func (c *Client) updateCache(version string, data meta.Data) error {
+	err := c.Client.SetData(&data)
 	if err != nil {
 		return err
 	}
@@ -488,7 +490,7 @@ func (c *Client) syncWithCluster(cluster string) {
 }
 
 func (c *Client) sync(cluster string) error {
-	path := "/clusters/" + url.QueryEscape(cluster) + "/versions/" + c.dataVersion
+	path := "/clusters/" + url.QueryEscape(cluster) + "/versions/" + url.QueryEscape(c.dataVersion)
 	c.logger.Println("Polling for updates from Clusterflux.")
 	resp, err := retryCfluxRequest("GET", path, url.Values{}, nil, RETRY_ATTEMPT)
 	if err != nil {
@@ -496,9 +498,14 @@ func (c *Client) sync(cluster string) error {
 	}
 
 	if http.StatusOK == resp.Status {
+		var tempData = meta.Data{}
+		err := (&tempData).UnmarshalBinary(resp.Body)
+		if err != nil {
+			return fmt.Errorf("ClusterFlux sync failed:%v", err)
+		}
 		c.mutex.Lock()
 		defer c.mutex.Unlock()
-		return c.updateCache(resp.Version, resp.Body)
+		return c.updateCache(resp.Version, tempData)
 	}
 	return fmt.Errorf("ClusterFlux sync failed. HTTPCode: %v, Message: %v", resp.Status, string(resp.Body))
 }
