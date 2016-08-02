@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -27,10 +28,11 @@ type Client struct {
 	// Version tracks current version of the cluster
 	dataVersion string
 	// mutex is used to lock write (local and to cluster)
-	mutex   *sync.Mutex
-	logger  *log.Logger
-	doneCh  chan struct{}
-	errorCh chan error
+	mutex       *sync.Mutex
+	logger      *log.Logger
+	nodePointer int
+	doneCh      chan struct{}
+	errorCh     chan error
 }
 
 // ClusterResponse used to parse response from Clusterflux
@@ -64,6 +66,7 @@ func NewClient(config *meta.Config) *Client {
 		dataVersion: "0",
 		mutex:       &sync.Mutex{},
 		logger:      log.New(os.Stderr, "[clusterflux] ", log.LstdFlags),
+		nodePointer: 0,
 		doneCh:      make(chan struct{}),
 		errorCh:     make(chan error),
 	}
@@ -71,38 +74,28 @@ func NewClient(config *meta.Config) *Client {
 
 // Open a connection to a shard service cluster.
 func (c *Client) Open() error {
-	err := c.registerNode()
+	err := c.Client.Open()
 	if err != nil {
 		return err
 	}
+	_, err = c.postToCflux(viper.GetString("CLUSTER"))
+	if err != nil {
+		return err
+	}
+
+	err = c.registerNode()
+	if err != nil {
+		return err
+	}
+
 	go c.startClusterSync()
-	return c.Client.Open()
+	return nil
 }
 
 // Close the shard service cluster connection.
 func (c *Client) Close() error {
 	go c.stopClusterSync()
 	return c.Client.Close()
-}
-
-// AcquireLease attempts to acquire the specified lease.
-func (c *Client) AcquireLease(name string) (*meta.Lease, error) {
-	return c.Client.AcquireLease(name)
-}
-
-// ClusterID returns the ID of the cluster it's connected to.
-func (c *Client) ClusterID() uint64 {
-	return c.Client.ClusterID()
-}
-
-// Database returns info for the requested database.
-func (c *Client) Database(name string) *meta.DatabaseInfo {
-	return c.Client.Database(name)
-}
-
-// Databases returns a list of all database infos.
-func (c *Client) Databases() []meta.DatabaseInfo {
-	return c.Client.Databases()
 }
 
 // CreateDatabase creates a database or returns it if it already exists
@@ -154,11 +147,6 @@ func (c *Client) CreateRetentionPolicy(database string, rpi *meta.RetentionPolic
 	return rpi, err
 }
 
-// RetentionPolicy returns the requested retention policy info.
-func (c *Client) RetentionPolicy(database, name string) (rpi *meta.RetentionPolicyInfo, err error) {
-	return c.Client.RetentionPolicy(database, name)
-}
-
 // DropRetentionPolicy drops a retention policy from a database.
 func (c *Client) DropRetentionPolicy(database, name string) error {
 	f := func(c *Client) (interface{}, error) {
@@ -184,16 +172,6 @@ func (c *Client) UpdateRetentionPolicy(database, name string, rpu *meta.Retentio
 	}
 	_, err := c.ModifyAndSync(f)
 	return err
-}
-
-// Users foo
-func (c *Client) Users() []meta.UserInfo {
-	return c.Client.Users()
-}
-
-// User foo
-func (c *Client) User(name string) (*meta.UserInfo, error) {
-	return c.Client.User(name)
 }
 
 // CreateUser foo
@@ -245,47 +223,6 @@ func (c *Client) SetAdminPrivilege(username string, admin bool) error {
 	return err
 }
 
-// UserPrivileges foo
-func (c *Client) UserPrivileges(username string) (map[string]influxql.Privilege, error) {
-	return c.Client.UserPrivileges(username)
-}
-
-// UserPrivilege foo
-func (c *Client) UserPrivilege(username, database string) (*influxql.Privilege, error) {
-	return c.Client.UserPrivilege(username, database)
-}
-
-// AdminUserExists foo
-func (c *Client) AdminUserExists() bool {
-	return c.Client.AdminUserExists()
-}
-
-// Authenticate foo
-func (c *Client) Authenticate(username, password string) (*meta.UserInfo, error) {
-	return c.Client.Authenticate(username, password)
-}
-
-// UserCount foo
-func (c *Client) UserCount() int {
-	return c.Client.UserCount()
-}
-
-// ShardIDs returns a list of all shard ids.
-func (c *Client) ShardIDs() []uint64 {
-	return c.Client.ShardIDs()
-}
-
-// ShardGroupsByTimeRange returns a list of all shard groups on a database and policy that may contain data
-// for the specified time range. Shard groups are sorted by start time.
-func (c *Client) ShardGroupsByTimeRange(database, policy string, min, max time.Time) (a []meta.ShardGroupInfo, err error) {
-	return c.Client.ShardGroupsByTimeRange(database, policy, min, max)
-}
-
-// ShardsByTimeRange returns a slice of shards that may contain data in the time range.
-func (c *Client) ShardsByTimeRange(sources influxql.Sources, tmin, tmax time.Time) (a []meta.ShardInfo, err error) {
-	return c.Client.ShardsByTimeRange(sources, tmin, tmax)
-}
-
 // DropShard deletes a shard by ID.
 func (c *Client) DropShard(id uint64) error {
 	f := func(c *Client) (interface{}, error) {
@@ -298,7 +235,19 @@ func (c *Client) DropShard(id uint64) error {
 // CreateShardGroup creates a shard group on a database and policy for a given timestamp.
 func (c *Client) CreateShardGroup(database, policy string, timestamp time.Time) (*meta.ShardGroupInfo, error) {
 	f := func(c *Client) (interface{}, error) {
-		return c.Client.CreateShardGroup(database, policy, timestamp)
+		sgi, err := c.Client.CreateShardGroup(database, policy, timestamp)
+		so, err := c.shardOwners(database, policy, sgi)
+		if err != nil {
+			return nil, err
+		}
+
+		sinfos := make([]meta.ShardInfo, len(sgi.Shards))
+		for i, shardInfo := range sgi.Shards {
+			shardInfo.Owners = so
+			sinfos[i] = shardInfo
+		}
+		sgi.Shards = sinfos
+		return sgi, nil
 	}
 	val, err := c.ModifyAndSync(f)
 	sgi, ok := val.(*meta.ShardGroupInfo)
@@ -323,15 +272,71 @@ func (c *Client) DeleteShardGroup(database, policy string, id uint64) error {
 // avoids taking the hit at write-time.
 func (c *Client) PrecreateShardGroups(from, to time.Time) error {
 	f := func(c *Client) (interface{}, error) {
-		return nil, c.Client.PrecreateShardGroups(from, to)
+		err := c.Client.PrecreateShardGroups(from, to)
+		if err != nil {
+			return nil, err
+		}
+		for _, di := range c.Client.Data().Databases {
+			for _, rp := range di.RetentionPolicies {
+				shardGroupInfos, err := c.Client.ShardGroupsByTimeRange(di.Name, rp.Name, from, to)
+				if err != nil {
+					return nil, err
+				}
+				for _, sgi := range shardGroupInfos {
+					so, err := c.shardOwners(di.Name, rp.Name, &sgi)
+					if err != nil {
+						return nil, err
+					}
+					sinfos := make([]meta.ShardInfo, len(sgi.Shards))
+					for i, shardInfo := range sgi.Shards {
+						shardInfo.Owners = so
+						sinfos[i] = shardInfo
+					}
+					sgi.Shards = sinfos
+				}
+			}
+		}
+		return nil, nil
 	}
 	_, err := c.ModifyAndSync(f)
 	return err
 }
 
-// ShardOwner returns the owning shard group info for a specific shard.
-func (c *Client) ShardOwner(shardID uint64) (database, policy string, sgi *meta.ShardGroupInfo) {
-	return c.Client.ShardOwner(shardID)
+func (c *Client) shardOwners(database string, policy string, sgi *meta.ShardGroupInfo) ([]meta.ShardOwner, error) {
+	rpi, _ := c.Client.RetentionPolicy(database, policy)
+	replicaN := rpi.ReplicaN
+	shardOwners := make([]meta.ShardOwner, replicaN)
+	nodes, _ := c.nodeList()
+	if len(nodes) < replicaN {
+		return nil, errors.New("Repliaction requested is more than the number of available nodes.")
+	}
+	for i := 0; i < replicaN; i++ {
+		shardOwners[i].NodeID = nodes[c.nodePointer]
+		c.nodePointer = (c.nodePointer + 1) % len(nodes)
+	}
+	return shardOwners, nil
+}
+
+func (c *Client) nodeList() ([]uint64, error) {
+	url := viper.GetString("CFLUX_ENDPOINT") + "/nodes/" + url.QueryEscape(viper.GetString("CLUSTER"))
+	req, err := http.NewRequest("GET", url, nil)
+	resp, err := c.expBackoffRequest(*req)
+	if err != nil {
+		return nil, err
+	}
+	var strIDs []string
+	err = json.NewDecoder(resp.Body).Decode(&strIDs)
+	if err != nil {
+		return nil, err
+	}
+	IDs := make([]uint64, len(strIDs))
+	for i, id := range strIDs {
+		IDs[i], err = strconv.ParseUint(id, 10, 64)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return IDs, nil
 }
 
 // CreateContinuousQuery foo
@@ -379,11 +384,6 @@ func (c *Client) SetData(data *meta.Data) error {
 	return err
 }
 
-// Data foo
-func (c *Client) Data() meta.Data {
-	return c.Client.Data()
-}
-
 // WaitForDataChanged will return a channel that will get closed when
 // the metastore data has changed
 func (c *Client) WaitForDataChanged() chan struct{} {
@@ -407,7 +407,12 @@ func (c *Client) SetLogOutput(w io.Writer) {
 // Load will save the current meta data from disk
 // TODO: should it call ModifyAndSync? It only updates the cache
 func (c *Client) Load() error {
-	return c.Client.Load()
+	f := func(c *Client) (interface{}, error) {
+		return nil, c.Client.Load()
+	}
+	_, err := c.ModifyAndSync(f)
+	return err
+	// return c.Client.Load()
 }
 
 // ModifyAndSync foo
@@ -422,7 +427,7 @@ func (c *Client) ModifyAndSync(f func(c *Client) (interface{}, error)) (interfac
 		// apply function that modifies current snapshot
 		val, err = f(c)
 		if err != nil {
-			return nil, err
+			break
 		}
 		// send modified snapshot to cflux
 		var response ClusterResponse
@@ -548,7 +553,7 @@ func (c *Client) sync(cluster string) error {
 		}
 	case http.StatusInternalServerError:
 		return errors.New(string(response.Body))
-	case http.StatusGatewayTimeout:
+	case http.StatusGatewayTimeout: // change to 204 No content
 		c.logger.Println("Update Timeout: No new updates!")
 		return errors.New("No Updates - No new version on remote cluster.")
 	}
@@ -632,12 +637,10 @@ func (c *Client) ping(id string) {
 		time.Sleep(5 * time.Second)
 		url := viper.GetString("CFLUX_ENDPOINT") + "/nodes/" + viper.GetString("CLUSTER") + "/" + id
 		req, err := http.NewRequest("PUT", url, nil)
-		resp, err := c.expBackoffRequest(*req)
+		_, err = c.expBackoffRequest(*req)
 		if err != nil {
 			c.logger.Println("Failed to Register InfluxDB on Clusterflux")
 			c.errorCh <- err
 		}
-		clusterResp := Response{}
-		json.NewDecoder(resp.Body).Decode(&clusterResp)
 	}
 }
