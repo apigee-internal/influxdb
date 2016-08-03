@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strconv"
 	"sync"
 	"time"
 
@@ -55,6 +54,14 @@ type Response struct {
 	Exp     string   `json:"expirationDate`
 	Message string   `json:"message"`
 	Mdata   Metadata `json:"metadata"`
+}
+
+// NodesList is used to return list of nodes
+type NodesList struct {
+	ID       uint64 `json:"id"`
+	IP       string `json:"ip"`
+	Hostname string `json:"hostname"`
+	Alive    bool   `json:"alive"`
 }
 
 // NewClient returns a new *Client.
@@ -306,7 +313,7 @@ func (c *Client) shardOwners(database string, policy string, sgi *meta.ShardGrou
 	rpi, _ := c.Client.RetentionPolicy(database, policy)
 	replicaN := rpi.ReplicaN
 	shardOwners := make([]meta.ShardOwner, replicaN)
-	nodes, _ := c.nodeList()
+	nodes, _ := c.aliveNodes()
 	if len(nodes) < replicaN {
 		return nil, errors.New("Repliaction requested is more than the number of available nodes.")
 	}
@@ -317,23 +324,22 @@ func (c *Client) shardOwners(database string, policy string, sgi *meta.ShardGrou
 	return shardOwners, nil
 }
 
-func (c *Client) nodeList() ([]uint64, error) {
+func (c *Client) aliveNodes() ([]uint64, error) {
 	url := viper.GetString("CFLUX_ENDPOINT") + "/nodes/" + url.QueryEscape(viper.GetString("CLUSTER"))
 	req, err := http.NewRequest("GET", url, nil)
 	resp, err := c.expBackoffRequest(*req)
 	if err != nil {
 		return nil, err
 	}
-	var strIDs []string
-	err = json.NewDecoder(resp.Body).Decode(&strIDs)
+	var nodeList []NodesList
+	err = json.NewDecoder(resp.Body).Decode(&nodeList)
 	if err != nil {
 		return nil, err
 	}
-	IDs := make([]uint64, len(strIDs))
-	for i, id := range strIDs {
-		IDs[i], err = strconv.ParseUint(id, 10, 64)
-		if err != nil {
-			return nil, err
+	IDs := make([]uint64, 0, len(nodeList))
+	for _, node := range nodeList {
+		if node.Alive == true {
+			IDs = append(IDs, node.ID)
 		}
 	}
 	return IDs, nil
@@ -384,17 +390,6 @@ func (c *Client) SetData(data *meta.Data) error {
 	return err
 }
 
-// WaitForDataChanged will return a channel that will get closed when
-// the metastore data has changed
-func (c *Client) WaitForDataChanged() chan struct{} {
-	return c.Client.WaitForDataChanged()
-}
-
-// MarshalBinary foo
-func (c *Client) MarshalBinary() ([]byte, error) {
-	return c.Client.MarshalBinary()
-}
-
 // SetLogOutput sets the writer to which all logs are written. It must not be
 // called after Open is called.
 func (c *Client) SetLogOutput(w io.Writer) {
@@ -405,14 +400,12 @@ func (c *Client) SetLogOutput(w io.Writer) {
 }
 
 // Load will save the current meta data from disk
-// TODO: should it call ModifyAndSync? It only updates the cache
 func (c *Client) Load() error {
 	f := func(c *Client) (interface{}, error) {
 		return nil, c.Client.Load()
 	}
 	_, err := c.ModifyAndSync(f)
 	return err
-	// return c.Client.Load()
 }
 
 // ModifyAndSync foo
