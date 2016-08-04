@@ -279,6 +279,7 @@ func (s *Store) ShardN() int {
 
 // CreateShard creates a shard with the given id and retention policy on a database.
 func (s *Store) CreateShard(database, retentionPolicy string, shardID uint64, enabled bool) error {
+	s.Logger.Printf("Inside actual CreateShard with ShardID=%d", shardID)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -802,6 +803,7 @@ func (s *Store) IteratorCreator(shards []uint64, opt *influxql.SelectOptions) (i
 
 // WriteToShard writes a list of points to a shard identified by its ID.
 func (s *Store) WriteToShard(shardID uint64, points []models.Point) error {
+	s.Logger.Printf("Inside actual WriteToShard with ShardID=%d", shardID)
 	s.mu.RLock()
 
 	select {

@@ -60,9 +60,15 @@ func (s *TSDBStore) CreateShard(database, retentionPolicy string, shardID uint64
 	}
 
 	for _, owner := range owners {
+		s.Logger.Printf("owner.NodeID=%d, s.Client.ID=%d", owner.NodeID, s.Client.ID)
 		if owner.NodeID == s.Client.ID {
-			s.Store.CreateShard(database, retentionPolicy, shardID, enabled)
+			s.Logger.Printf("Calling actual CreateShard with ShardID=%d", shardID)
+			err = s.Store.CreateShard(database, retentionPolicy, shardID, enabled)
+			if err != nil {
+				return err
+			}
 		} else {
+			s.Logger.Printf("Calling remote CreateShard with ShardID=%d", shardID)
 			err = s.CreateShardOnNode(nodes[owner.NodeID], database, retentionPolicy, shardID, enabled)
 			if err != nil {
 				return nil
@@ -71,6 +77,11 @@ func (s *TSDBStore) CreateShard(database, retentionPolicy string, shardID uint64
 	}
 	return nil
 }
+
+// // CreateShard creates a shard with the given id and retention policy on a database.
+// func (s *TSDBStore) CreateShard(database, retentionPolicy string, shardID uint64, enabled bool) error {
+// 	return s.Store.CreateShard(database, retentionPolicy, shardID, enabled)
+// }
 
 // WriteToShard writes a list of points to a shard identified by its ID.
 func (s *TSDBStore) WriteToShard(shardID uint64, points []models.Point) error {
@@ -83,17 +94,27 @@ func (s *TSDBStore) WriteToShard(shardID uint64, points []models.Point) error {
 	}
 
 	for _, owner := range owners {
+		s.Logger.Printf("owner.NodeID=%d, s.Client.ID=%d", owner.NodeID, s.Client.ID)
 		if owner.NodeID == s.Client.ID {
-			s.Store.WriteToShard(shardID, points)
-		} else {
-			err = s.WriteToShardOnNode(nodes[owner.NodeID], shardID, points)
+			s.Logger.Printf("Calling actual WriteToShard with ShardID=%d", shardID)
+			err = s.Store.WriteToShard(shardID, points)
 			if err != nil {
-				return nil
+				return err
 			}
+		}
+		s.Logger.Printf("Calling remote WriteToShard with ShardID=%d", shardID)
+		err = s.WriteToShardOnNode(nodes[owner.NodeID], shardID, points)
+		if err != nil {
+			return err
 		}
 	}
 	return nil
 }
+
+// // WriteToShard writes a list of points to a shard identified by its ID.
+// func (s *TSDBStore) WriteToShard(shardID uint64, points []models.Point) error {
+// 	return s.WriteToShard(shardID, points)
+// }
 
 // CreateShardLocal foo
 func (s *TSDBStore) CreateShardLocal(w http.ResponseWriter, r *http.Request) {
@@ -147,7 +168,7 @@ func (s *TSDBStore) WriteToShardLocal(w http.ResponseWriter, r *http.Request) {
 		points = append(points, pt)
 
 	}
-	err = s.WriteToShard(cmd.GetShardID(), points)
+	err = s.Store.WriteToShard(cmd.GetShardID(), points)
 	if err != nil {
 		output, _ := json.Marshal(err)
 		buffer := bytes.NewBuffer(output)
