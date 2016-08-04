@@ -52,7 +52,7 @@ type Metadata struct {
 // Response used to parse response from Clusterflux for Nodes metadata
 type Response struct {
 	Status  string   `json:"status"`
-	Id      string   `json:"id"`
+	Id      uint64   `json:"id"`
 	Exp     string   `json:"expirationDate"`
 	Message string   `json:"message"`
 	Mdata   Metadata `json:"metadata"`
@@ -366,7 +366,7 @@ func (c *Client) AliveNodesMap() (map[uint64]NodesList, error) {
 		return nil, err
 	}
 	var nodeList []NodesList
-	var nodeMap map[uint64]NodesList
+	nodeMap := map[uint64]NodesList{}
 	err = json.NewDecoder(resp.Body).Decode(&nodeList)
 	if err != nil {
 		return nil, err
@@ -633,7 +633,7 @@ func (c *Client) registerNode() error {
 	}
 	clusterResp := Response{}
 	json.NewDecoder(resp.Body).Decode(&clusterResp)
-	c.ID, err = strconv.ParseUint(clusterResp.Id, 10, 64)
+	c.ID = clusterResp.Id
 	if err != nil {
 		return err
 	}
@@ -661,11 +661,11 @@ func (c *Client) getNodeMetaData() Metadata {
 	return Metadata{ip, hostname}
 }
 
-func (c *Client) ping(id string) {
+func (c *Client) ping(id uint64) {
 	var err error
 	for err == nil {
 		time.Sleep(5 * time.Second)
-		url := viper.GetString("CFLUX_ENDPOINT") + "/nodes/" + viper.GetString("CLUSTER") + "/" + id
+		url := viper.GetString("CFLUX_ENDPOINT") + "/nodes/" + viper.GetString("CLUSTER") + "/" + strconv.FormatUint(id, 10)
 		req, err := http.NewRequest("PUT", url, nil)
 		_, err = c.ExpBackoffRequest(*req)
 		if err != nil {
