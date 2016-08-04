@@ -71,6 +71,7 @@ type NodesList struct {
 func NewClient(config *meta.Config) *Client {
 	viper.SetDefault("CFLUX_ENDPOINT", "http://localhost:8000")
 	viper.SetDefault("CLUSTER", "default")
+	viper.AutomaticEnv()
 	return &Client{
 		Client:      meta.NewClient(config),
 		dataVersion: "0",
