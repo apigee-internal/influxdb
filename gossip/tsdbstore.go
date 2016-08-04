@@ -8,7 +8,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strconv"
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/influxdata/influxdb/influxql"
@@ -177,7 +176,7 @@ func (s *TSDBStore) CreateShardOnNode(node cflux.NodesList, database string, ret
 
 // WriteToShardOnNode foo
 func (s *TSDBStore) WriteToShardOnNode(node cflux.NodesList, shardID uint64, points []models.Point) error {
-	url := "http://" + "node.BindAddr" + "/write/" + strconv.FormatUint(shardID, 10)
+	url := "http://" + "node.BindAddr" + "/write"
 	pnts := make([][]byte, 0, len(points))
 	for _, point := range points {
 		data, err := point.MarshalBinary()
