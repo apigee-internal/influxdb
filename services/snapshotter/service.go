@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"github.com/influxdata/influxdb"
+	"github.com/influxdata/influxdb/gossip"
 	"github.com/influxdata/influxdb/services/meta"
-	"github.com/influxdata/influxdb/tsdb"
 )
 
 const (
@@ -40,7 +40,7 @@ type Service struct {
 		Database(name string) *meta.DatabaseInfo
 	}
 
-	TSDBStore *tsdb.Store
+	TSDBStore *gossip.TSDBStore
 
 	Listener net.Listener
 	Logger   *log.Logger

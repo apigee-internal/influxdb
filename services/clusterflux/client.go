@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -29,9 +30,10 @@ type Client struct {
 	// mutex is used to lock write (local and to cluster)
 	mutex       *sync.Mutex
 	logger      *log.Logger
-	nodePointer int
 	doneCh      chan struct{}
 	errorCh     chan error
+	nodePointer int
+	ID          uint64
 }
 
 // ClusterResponse used to parse response from Clusterflux
@@ -51,7 +53,7 @@ type Metadata struct {
 type Response struct {
 	Status  string   `json:"status"`
 	Id      string   `json:"id"`
-	Exp     string   `json:"expirationDate`
+	Exp     string   `json:"expirationDate"`
 	Message string   `json:"message"`
 	Mdata   Metadata `json:"metadata"`
 }
@@ -61,6 +63,7 @@ type NodesList struct {
 	ID       uint64 `json:"id"`
 	IP       string `json:"ip"`
 	Hostname string `json:"hostname"`
+	BindAddr string `json:"bind-address"`
 	Alive    bool   `json:"alive"`
 }
 
@@ -313,7 +316,7 @@ func (c *Client) shardOwners(database string, policy string, sgi *meta.ShardGrou
 	rpi, _ := c.Client.RetentionPolicy(database, policy)
 	replicaN := rpi.ReplicaN
 	shardOwners := make([]meta.ShardOwner, replicaN)
-	nodes, _ := c.aliveNodes()
+	nodes, _ := c.aliveNodeIDs()
 	if len(nodes) < replicaN {
 		return nil, errors.New("Repliaction requested is more than the number of available nodes.")
 	}
@@ -324,15 +327,8 @@ func (c *Client) shardOwners(database string, policy string, sgi *meta.ShardGrou
 	return shardOwners, nil
 }
 
-func (c *Client) aliveNodes() ([]uint64, error) {
-	url := viper.GetString("CFLUX_ENDPOINT") + "/nodes/" + url.QueryEscape(viper.GetString("CLUSTER"))
-	req, err := http.NewRequest("GET", url, nil)
-	resp, err := c.expBackoffRequest(*req)
-	if err != nil {
-		return nil, err
-	}
-	var nodeList []NodesList
-	err = json.NewDecoder(resp.Body).Decode(&nodeList)
+func (c *Client) aliveNodeIDs() ([]uint64, error) {
+	nodeList, err := c.aliveNodes()
 	if err != nil {
 		return nil, err
 	}
@@ -343,6 +339,41 @@ func (c *Client) aliveNodes() ([]uint64, error) {
 		}
 	}
 	return IDs, nil
+}
+
+func (c *Client) aliveNodes() ([]NodesList, error) {
+	url := viper.GetString("CFLUX_ENDPOINT") + "/nodes/" + url.QueryEscape(viper.GetString("CLUSTER"))
+	req, err := http.NewRequest("GET", url, nil)
+	resp, err := c.ExpBackoffRequest(*req)
+	if err != nil {
+		return nil, err
+	}
+	var nodeList []NodesList
+	err = json.NewDecoder(resp.Body).Decode(&nodeList)
+	if err != nil {
+		return nil, err
+	}
+	return nodeList, nil
+}
+
+// AliveNodesMap foo
+func (c *Client) AliveNodesMap() (map[uint64]NodesList, error) {
+	url := viper.GetString("CFLUX_ENDPOINT") + "/nodes/" + url.QueryEscape(viper.GetString("CLUSTER"))
+	req, err := http.NewRequest("GET", url, nil)
+	resp, err := c.ExpBackoffRequest(*req)
+	if err != nil {
+		return nil, err
+	}
+	var nodeList []NodesList
+	var nodeMap map[uint64]NodesList
+	err = json.NewDecoder(resp.Body).Decode(&nodeList)
+	if err != nil {
+		return nil, err
+	}
+	for _, node := range nodeList {
+		nodeMap[node.ID] = node
+	}
+	return nodeMap, nil
 }
 
 // CreateContinuousQuery foo
@@ -483,7 +514,7 @@ func (c *Client) postToCflux(cluster string) (ClusterResponse, error) {
 		return ClusterResponse{}, err
 	}
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(data))
-	resp, err := c.expBackoffRequest(*req)
+	resp, err := c.ExpBackoffRequest(*req)
 	if err != nil {
 		return ClusterResponse{}, err
 	}
@@ -528,7 +559,7 @@ func (c *Client) sync(cluster string) error {
 	req, err := http.NewRequest("GET", url, nil)
 
 	c.logger.Println("Polling for updates from Clusterflux.")
-	resp, err := c.expBackoffRequest(*req)
+	resp, err := c.ExpBackoffRequest(*req)
 	if err != nil {
 		return err
 	}
@@ -553,7 +584,8 @@ func (c *Client) sync(cluster string) error {
 	return nil
 }
 
-func (c *Client) expBackoffRequest(req http.Request) (*http.Response, error) {
+// ExpBackoffRequest foo
+func (c *Client) ExpBackoffRequest(req http.Request) (*http.Response, error) {
 	client := &http.Client{}
 	var resp *http.Response
 	var err error
@@ -593,13 +625,17 @@ func (c *Client) registerNode() error {
 	}
 	url := viper.GetString("CFLUX_ENDPOINT") + "/nodes/" + viper.GetString("CLUSTER")
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(data))
-	resp, err := c.expBackoffRequest(*req)
+	resp, err := c.ExpBackoffRequest(*req)
 	if err != nil {
 		c.logger.Println("Failed to Register InfluxDB on Clusterflux")
 		return err
 	}
 	clusterResp := Response{}
 	json.NewDecoder(resp.Body).Decode(&clusterResp)
+	c.ID, err = strconv.ParseUint(clusterResp.Id, 10, 64)
+	if err != nil {
+		return err
+	}
 	go c.ping(clusterResp.Id)
 	return nil
 }
@@ -630,7 +666,7 @@ func (c *Client) ping(id string) {
 		time.Sleep(5 * time.Second)
 		url := viper.GetString("CFLUX_ENDPOINT") + "/nodes/" + viper.GetString("CLUSTER") + "/" + id
 		req, err := http.NewRequest("PUT", url, nil)
-		_, err = c.expBackoffRequest(*req)
+		_, err = c.ExpBackoffRequest(*req)
 		if err != nil {
 			c.logger.Println("Failed to Register InfluxDB on Clusterflux")
 			c.errorCh <- err

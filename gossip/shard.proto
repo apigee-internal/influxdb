@@ -1,0 +1,13 @@
+package gossip;
+
+message CreateShardCommmand {
+  required string database = 1;
+  required string retentionPolicy = 2;
+  required uint64 shardID = 3;
+  required bool enabled = 4;
+}
+
+message WriteShardCommand {
+  required uint64 shardID = 1;
+  repeated bytes points = 2;
+}

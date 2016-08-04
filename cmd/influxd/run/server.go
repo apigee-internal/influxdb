@@ -13,6 +13,7 @@ import (
 
 	"github.com/influxdata/influxdb"
 	"github.com/influxdata/influxdb/coordinator"
+	"github.com/influxdata/influxdb/gossip"
 	"github.com/influxdata/influxdb/influxql"
 	"github.com/influxdata/influxdb/models"
 	"github.com/influxdata/influxdb/monitor"
@@ -29,7 +30,6 @@ import (
 	"github.com/influxdata/influxdb/services/subscriber"
 	"github.com/influxdata/influxdb/services/udp"
 	"github.com/influxdata/influxdb/tcp"
-	"github.com/influxdata/influxdb/tsdb"
 	client "github.com/influxdata/usage-client/v1"
 	// Initialize the engine packages
 	_ "github.com/influxdata/influxdb/tsdb/engine"
@@ -65,7 +65,7 @@ type Server struct {
 
 	MetaClient *cflux.Client
 
-	TSDBStore     *tsdb.Store
+	TSDBStore     *gossip.TSDBStore
 	QueryExecutor *influxql.QueryExecutor
 	PointsWriter  *coordinator.PointsWriter
 	Subscriber    *subscriber.Service
@@ -162,11 +162,11 @@ func NewServer(c *Config, buildInfo *BuildInfo) (*Server, error) {
 		return nil, err
 	}
 
-	s.TSDBStore = tsdb.NewStore(c.Data.Dir)
-	s.TSDBStore.EngineOptions.Config = c.Data
+	s.TSDBStore = gossip.NewStore(c.Data.Dir, s.MetaClient)
+	s.TSDBStore.Store.EngineOptions.Config = c.Data
 
 	// Copy TSDB configuration.
-	s.TSDBStore.EngineOptions.EngineVersion = c.Data.Engine
+	s.TSDBStore.Store.EngineOptions.EngineVersion = c.Data.Engine
 
 	// Create the Subscriber service
 	s.Subscriber = subscriber.NewService(c.Subscriber)
@@ -180,9 +180,10 @@ func NewServer(c *Config, buildInfo *BuildInfo) (*Server, error) {
 	// Initialize query executor.
 	s.QueryExecutor = influxql.NewQueryExecutor()
 	s.QueryExecutor.StatementExecutor = &coordinator.StatementExecutor{
-		MetaClient:        s.MetaClient,
-		TaskManager:       s.QueryExecutor.TaskManager,
-		TSDBStore:         coordinator.LocalTSDBStore{Store: s.TSDBStore},
+		MetaClient:  s.MetaClient,
+		TaskManager: s.QueryExecutor.TaskManager,
+		// TSDBStore:         coordinator.LocalTSDBStore{Store: s.TSDBStore},
+		TSDBStore:         s.TSDBStore,
 		Monitor:           s.Monitor,
 		PointsWriter:      s.PointsWriter,
 		MaxSelectPointN:   c.Coordinator.MaxSelectPointN,
