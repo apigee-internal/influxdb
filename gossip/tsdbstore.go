@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sync"
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/influxdata/influxdb/influxql"
@@ -92,21 +93,28 @@ func (s *TSDBStore) WriteToShard(shardID uint64, points []models.Point) error {
 	if err != nil {
 		return err
 	}
+	wg := sync.WaitGroup{}
+	defer wg.Wait()
 
 	for _, owner := range owners {
-		s.Logger.Printf("owner.NodeID=%d, s.Client.ID=%d", owner.NodeID, s.Client.ID)
-		if owner.NodeID == s.Client.ID {
-			s.Logger.Printf("Calling actual WriteToShard with ShardID=%d", shardID)
-			err = s.Store.WriteToShard(shardID, points)
+		wg.Add(1)
+		go func(owner meta.ShardOwner) error {
+			defer wg.Done()
+			s.Logger.Printf("owner.NodeID=%d, s.Client.ID=%d", owner.NodeID, s.Client.ID)
+			if owner.NodeID == s.Client.ID {
+				s.Logger.Printf("Callin	g actual WriteToShard with ShardID=%d", shardID)
+				err = s.Store.WriteToShard(shardID, points)
+				if err != nil {
+					return err
+				}
+			}
+			s.Logger.Printf("Calling remote WriteToShard with ShardID=%d", shardID)
+			err = s.WriteToShardOnNode(nodes[owner.NodeID], shardID, points)
 			if err != nil {
 				return err
 			}
-		}
-		s.Logger.Printf("Calling remote WriteToShard with ShardID=%d", shardID)
-		err = s.WriteToShardOnNode(nodes[owner.NodeID], shardID, points)
-		if err != nil {
-			return err
-		}
+			return nil
+		}(owner)
 	}
 	return nil
 }

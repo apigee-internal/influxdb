@@ -18,6 +18,7 @@ import (
 	"github.com/influxdata/influxdb/coordinator"
 	"github.com/influxdata/influxdb/monitor"
 	"github.com/influxdata/influxdb/services/admin"
+	"github.com/influxdata/influxdb/services/clusterflux"
 	"github.com/influxdata/influxdb/services/collectd"
 	"github.com/influxdata/influxdb/services/continuous_querier"
 	"github.com/influxdata/influxdb/services/graphite"
@@ -40,6 +41,7 @@ const (
 type Config struct {
 	Meta        *meta.Config       `toml:"meta"`
 	Data        tsdb.Config        `toml:"data"`
+	Cflux       *cflux.Config      `toml:"cflux"`
 	Coordinator coordinator.Config `toml:"coordinator"`
 	Retention   retention.Config   `toml:"retention"`
 	Precreator  precreator.Config  `toml:"shard-precreation"`
@@ -67,6 +69,7 @@ func NewConfig() *Config {
 	c := &Config{}
 	c.Meta = meta.NewConfig()
 	c.Data = tsdb.NewConfig()
+	c.Cflux = cflux.NewConfig()
 	c.Coordinator = coordinator.NewConfig()
 	c.Precreator = precreator.NewConfig()
 
@@ -104,6 +107,7 @@ func NewDemoConfig() (*Config, error) {
 
 	c.Meta.Dir = filepath.Join(homeDir, ".influxdb/meta")
 	c.Data.Dir = filepath.Join(homeDir, ".influxdb/data")
+	c.Cflux.Dir = filepath.Join(homeDir, ".influxdb/cflux")
 	c.Data.WALDir = filepath.Join(homeDir, ".influxdb/wal")
 
 	c.Admin.Enabled = true

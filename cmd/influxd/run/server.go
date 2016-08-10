@@ -108,6 +108,9 @@ func NewServer(c *Config, buildInfo *BuildInfo) (*Server, error) {
 	if err := os.MkdirAll(c.Meta.Dir, 0777); err != nil {
 		return nil, fmt.Errorf("mkdir all: %s", err)
 	}
+	if err := os.MkdirAll(c.Cflux.Dir, 0777); err != nil {
+		return nil, fmt.Errorf("mkdir all: %s", err)
+	}
 
 	// 0.10-rc1 and prior would sometimes put the node.json at the root
 	// dir which breaks backup/restore and restarting nodes.  This moves
@@ -145,7 +148,7 @@ func NewServer(c *Config, buildInfo *BuildInfo) (*Server, error) {
 
 		Logger: log.New(os.Stderr, "", log.LstdFlags),
 
-		MetaClient: cflux.NewClient(c.Meta),
+		MetaClient: cflux.NewClient(c.Meta, c.Cflux),
 
 		reportingDisabled: c.ReportingDisabled,
 

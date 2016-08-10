@@ -13,11 +13,13 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/influxdata/influxdb/influxql"
 	"github.com/influxdata/influxdb/services/meta"
+
 	"github.com/spf13/viper"
 )
 
@@ -34,6 +36,7 @@ type Client struct {
 	errorCh     chan error
 	nodePointer int
 	ID          uint64
+	path        string
 }
 
 // ClusterResponse used to parse response from Clusterflux
@@ -67,19 +70,26 @@ type NodesList struct {
 	Alive    bool   `json:"alive"`
 }
 
+type Page struct {
+	ID uint64 `json:"id"`
+}
+
 // NewClient returns a new *Client.
-func NewClient(config *meta.Config) *Client {
+func NewClient(metaConfig *meta.Config, cfluxConfig *Config) *Client {
+	viper.SetConfigName("config")            //need to figure out where config file will sit
+	viper.AddConfigPath("/etc/clusterflux/") //assign default path
 	viper.SetDefault("CFLUX_ENDPOINT", "http://localhost:8000")
 	viper.SetDefault("CLUSTER", "default")
 	viper.AutomaticEnv()
 	return &Client{
-		Client:      meta.NewClient(config),
+		Client:      meta.NewClient(metaConfig),
 		dataVersion: "0",
 		mutex:       &sync.Mutex{},
 		logger:      log.New(os.Stderr, "[clusterflux] ", log.LstdFlags),
 		nodePointer: 0,
 		doneCh:      make(chan struct{}),
 		errorCh:     make(chan error),
+		path:        cfluxConfig.Dir,
 	}
 }
 
@@ -93,11 +103,12 @@ func (c *Client) Open() error {
 	if err != nil {
 		return err
 	}
-
-	err = c.registerNode()
+	c.logger.Println("setting up node")
+	err = c.nodeSetup()
 	if err != nil {
 		return err
 	}
+	c.logger.Println("finished setting up node")
 
 	go c.startClusterSync()
 	return nil
@@ -619,6 +630,7 @@ func (c *Client) readResponse(resp *http.Response) (ClusterResponse, error) {
 }
 
 func (c *Client) registerNode() error {
+
 	mdata := c.getNodeMetaData()
 	data, err := json.Marshal(mdata)
 	if err != nil {
@@ -637,7 +649,11 @@ func (c *Client) registerNode() error {
 	if err != nil {
 		return err
 	}
-	go c.ping(clusterResp.Id)
+	err = c.writeID()
+	if err != nil {
+		return err
+	}
+	go c.heartbeat(clusterResp.Id)
 	return nil
 }
 
@@ -661,16 +677,72 @@ func (c *Client) getNodeMetaData() Metadata {
 	return Metadata{ip, hostname}
 }
 
-func (c *Client) ping(id uint64) {
+func (c *Client) heartbeat(id uint64) {
 	var err error
 	for err == nil {
 		time.Sleep(5 * time.Second)
-		url := viper.GetString("CFLUX_ENDPOINT") + "/nodes/" + viper.GetString("CLUSTER") + "/" + strconv.FormatUint(id, 10)
-		req, err := http.NewRequest("PUT", url, nil)
-		_, err = c.ExpBackoffRequest(*req)
+		_, err = c.ping(id)
 		if err != nil {
 			c.logger.Println("Failed to Register InfluxDB on Clusterflux")
 			c.errorCh <- err
 		}
 	}
+}
+
+func (c *Client) ping(id uint64) (ClusterResponse, error) {
+	url := viper.GetString("CFLUX_ENDPOINT") + "/nodes/" + viper.GetString("CLUSTER") + "/" + strconv.FormatUint(id, 10)
+	req, err := http.NewRequest("PUT", url, nil)
+	resp, err := c.ExpBackoffRequest(*req)
+	response, err := c.readResponse(resp)
+	c.logger.Println("response status :", response.Status)
+	c.logger.Println("response body :", string(response.Body))
+
+	//b := ioutil.ReadAll(response.Body)
+	//c.logger.Println(b)
+	return response, err
+}
+
+func (c *Client) writeID() error {
+	p := Page{ID: c.ID}
+	j, err := json.Marshal(p)
+	if err != nil {
+		return err
+	}
+
+	err = ioutil.WriteFile(c.path+"/node_id.json", j, 0644)
+	if err != nil {
+		c.logger.Println("Error while writing to file", err)
+		return err
+	}
+	return nil
+}
+
+func (c *Client) nodeID() (uint64, error) {
+	raw, err := ioutil.ReadFile(c.path + "/node_id.json")
+	if err != nil {
+		return 0, err
+	}
+	var p Page
+	json.Unmarshal(raw, &p)
+	return p.ID, nil
+}
+
+func (c *Client) nodeSetup() error {
+	ID, err := c.nodeID()
+	if ID == 0 || err != nil {
+		c.logger.Println("Previous NodeID not found, registering node and assigning new ID")
+		err = c.registerNode()
+		if err != nil {
+			return err
+		}
+	}
+	resp, err := c.ping(ID)
+	if err != nil {
+		return err
+	}
+	if strings.Contains(string(resp.Body), "Key not found") {
+		c.logger.Println("Unable to refresh using cached ID, reregistering node and assigning new ID")
+		c.registerNode()
+	}
+	return nil
 }
