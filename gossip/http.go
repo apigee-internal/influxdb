@@ -53,6 +53,12 @@ func (s *TSDBStore) NewRouter() *mux.Router {
 			"/write",
 			s.WriteToShardLocal,
 		},
+		Route{
+			"Read",
+			"GET",
+			"/read/shards",
+			s.ReadShardsToRemote,
+		},
 	}
 
 	router := mux.NewRouter().StrictSlash(true)
