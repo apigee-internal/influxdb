@@ -245,6 +245,7 @@ func (ic *remoteShardIteratorCreator) ExpandSources(sources influxql.Sources) (i
 
 //IteratorCreator foo
 func (s *TSDBStore) IteratorCreator(shards []meta.ShardInfo, opt *influxql.SelectOptions) (influxql.IteratorCreator, error) {
+	s.Logger.Println("Inside tsdb IteratorCreator")
 	var shardIDs []uint64
 	shardIDs = make([]uint64, 0)
 	var ics []influxql.IteratorCreator
@@ -253,28 +254,39 @@ func (s *TSDBStore) IteratorCreator(shards []meta.ShardInfo, opt *influxql.Selec
 		isRemote := 1
 		for _, owner := range sh.Owners {
 			if owner.NodeID == s.Client.ID {
+				s.Logger.Printf("local Shard: %d, node: %d", sh.ID, owner.NodeID)
 				shardIDs = append(shardIDs, sh.ID)
 				isRemote = 0
 				break
 			}
 		}
 		if isRemote == 1 {
+			s.Logger.Printf("remote Shard: %d, node: %d", sh.ID, sh.Owners[0].NodeID)
 			ric := &remoteShardIteratorCreator{sh: &RemoteIteratorCreator{s, sh.Owners[0].NodeID, sh.ID}}
 			ics = append(ics, ric)
 		}
 	}
-	localIC, err := s.Store.IteratorCreator(shardIDs, opt)
-	if err != nil {
+
+	if err := func() error {
+		for _, id := range shardIDs {
+			lic := s.Store.ShardIteratorCreator(id)
+			if lic == nil {
+				continue
+			}
+			ics = append(ics, lic)
+		}
+		return nil
+	}(); err != nil {
 		influxql.IteratorCreators(ics).Close()
 		return nil, err
 	}
-	// iterate over localIC
-	ics = append(ics, localIC)
+	s.Logger.Println("Returning")
 	return influxql.IteratorCreators(ics), nil
 }
 
 // ReadShardToRemote foo
 func (s *TSDBStore) ReadShardToRemote(w http.ResponseWriter, r *http.Request) {
+	s.Logger.Println("Serving http ReadShardToRemote request")
 	var buf bytes.Buffer
 	var since time.Time
 	cmd := ReadShardCommand{}
@@ -291,25 +303,18 @@ func (s *TSDBStore) ReadShardToRemote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// shards := s.Store.Shards(cmd.GetShardIDs())
-
-	// respShard := &ReadShardCommand_Shard{}
-	// var respShards []*ReadShardCommand_Shard
-	// respShards = make([]*ReadShardCommand_Shard, 0)
-	// for _, shardID := range cmd.GetShardIDs() {
 	since, err = time.Parse(time.RFC3339Nano, strconv.FormatInt(cmd.GetStartTime(), 64))
 	err = s.Store.BackupShard(cmd.GetShardID(), since, &buf)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	s.Logger.Println("Backup succesful")
 	shardID := cmd.GetShardID()
 	resp := &ReadShardCommand{ShardID: &shardID, Points: buf.Bytes()}
-	// respShards = append(respShards, respShard)
 	log.Printf("shard read = %s", buf.String())
-	// }
-	// resp := &ReadShardCommand{Shards: respShards}
 	data, err := proto.Marshal(resp)
+	s.Logger.Println("Returning from http ReadShardToRemote")
 	w.Write(data)
 	// time.Parse(time.RFC3339Nano, s)
 }

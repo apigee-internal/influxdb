@@ -58,6 +58,7 @@ func (ric *RemoteIteratorCreator) CreateIterator(opt influxql.IteratorOptions) (
 	if err != nil {
 		log.Printf("Error while unmarshaling response: %s", err.Error())
 	}
+	log.Println("Going to Restore to local")
 	ric.Store.RestoreShard(respMessage.GetShardID(), bytes.NewReader(respMessage.GetPoints()))
 	shard := ric.Store.Shard(respMessage.GetShardID())
 	return shard.CreateIterator(opt)
