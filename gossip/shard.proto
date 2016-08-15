@@ -14,6 +14,6 @@ message WriteShardCommand {
 
 message ReadShardCommand {
   required uint64 shardID = 1;
-  required int64 startTime = 2;
+  optional int64 startTime = 2;
   optional bytes points = 3;
 }
