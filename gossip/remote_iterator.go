@@ -3,6 +3,7 @@ package gossip
 import (
 	"bytes"
 	"encoding/json"
+	"io/ioutil"
 	"log"
 	"math"
 	"net/http"
@@ -16,8 +17,10 @@ import (
 
 // RemoteIteratorCreator implements influxql.IteratorCreator
 type RemoteIteratorCreator struct {
-	NodeID   uint64
-	ShardIDs []uint64
+	Store   *TSDBStore
+	ShardID uint64
+	NodeID  uint64
+	// ShardIDs []uint64
 }
 
 // NodesList is used to return list of nodes
@@ -35,30 +38,41 @@ func (ric *RemoteIteratorCreator) CreateIterator(opt influxql.IteratorOptions) (
 	log.Printf("************* NodeID = %d, aliveNodes = %v", ric.NodeID, aliveNodes[ric.NodeID])
 	url := "http://" + aliveNodes[ric.NodeID].BindAddr + "/read"
 	cmd := &ReadShardCommand{
-		ShardIDs:  ric.ShardIDs,
+		ShardID:   &(ric.ShardID),
 		StartTime: &opt.StartTime,
 	}
 	data, err := proto.Marshal(cmd)
 	req, err := http.NewRequest("GET", url, bytes.NewBuffer(data))
-	_, err = ExpBackoffRequest(*req)
+	resp, err := ExpBackoffRequest(*req)
 	if err != nil {
 		log.Printf("Failed to read shards from remote node with ID: %d", ric.NodeID)
 		return nil, err
-
-		// time.Parse(time.RFC3339Nano, s)
 	}
-	return nil, nil
-
+	body, err := ioutil.ReadAll(resp.Body)
+	defer resp.Body.Close()
+	if err != nil {
+		log.Printf("Error while reading response: %s", err.Error())
+	}
+	respMessage := &ReadShardCommand{}
+	err = proto.Unmarshal(body, respMessage)
+	if err != nil {
+		log.Printf("Error while unmarshaling response: %s", err.Error())
+	}
+	ric.Store.RestoreShard(respMessage.GetShardID(), bytes.NewReader(respMessage.GetPoints()))
+	shard := ric.Store.Shard(respMessage.GetShardID())
+	return shard.CreateIterator(opt)
 }
 
 // FieldDimensions Returns the unique fields and dimensions across a list of sources from the remote node
 func (ric *RemoteIteratorCreator) FieldDimensions(sources influxql.Sources) (fields map[string]influxql.DataType, dimensions map[string]struct{}, err error) {
-	return nil, nil, nil
+	shard := ric.Store.Shard(ric.ShardID)
+	return shard.FieldDimensions(sources)
 }
 
 // ExpandSources Expands regex sources to all matching sources for the remote nodes
 func (ric *RemoteIteratorCreator) ExpandSources(sources influxql.Sources) (influxql.Sources, error) {
-	return nil, nil
+	shard := ric.Store.Shard(ric.ShardID)
+	return shard.ExpandSources(sources)
 }
 
 // AliveNodesMap foo

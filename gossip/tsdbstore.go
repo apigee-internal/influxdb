@@ -247,53 +247,36 @@ func (ic *remoteShardIteratorCreator) ExpandSources(sources influxql.Sources) (i
 func (s *TSDBStore) IteratorCreator(shards []meta.ShardInfo, opt *influxql.SelectOptions) (influxql.IteratorCreator, error) {
 	var shardIDs []uint64
 	shardIDs = make([]uint64, 0)
-	var remoteShardIDs []uint64
-	remoteShardIDs = make([]uint64, 0)
-	remoteShardMap := make(map[uint64][]uint64)
-	var ok bool
+	var ics []influxql.IteratorCreator
+	ics = make([]influxql.IteratorCreator, 0)
 	for _, sh := range shards {
-		isNewRemote := 1
-		remoteShardIDs = remoteShardIDs[:0]
+		isRemote := 1
 		for _, owner := range sh.Owners {
 			if owner.NodeID == s.Client.ID {
 				shardIDs = append(shardIDs, sh.ID)
-				isNewRemote = 0
-				break
-			} else if remoteShardIDs, ok = remoteShardMap[owner.NodeID]; ok {
-				remoteShardIDs = append(remoteShardIDs, sh.ID)
-				remoteShardMap[owner.NodeID] = remoteShardIDs
-				isNewRemote = 0
+				isRemote = 0
 				break
 			}
 		}
-		if isNewRemote == 1 {
-			remoteShardIDs = append(remoteShardIDs, sh.Owners[0].NodeID)
-			remoteShardMap[sh.Owners[0].NodeID] = remoteShardIDs
-		}
-	}
-
-	var localIC influxql.IteratorCreator
-	var ics []influxql.IteratorCreator
-	ics = make([]influxql.IteratorCreator, 0)
-	var err error
-	if err := func() error {
-		for nodeID, remoteShardIDs := range remoteShardMap {
-			ric := &remoteShardIteratorCreator{sh: &RemoteIteratorCreator{nodeID, remoteShardIDs}}
+		if isRemote == 1 {
+			ric := &remoteShardIteratorCreator{sh: &RemoteIteratorCreator{s, sh.Owners[0].NodeID, sh.ID}}
 			ics = append(ics, ric)
 		}
-		localIC, err = s.Store.IteratorCreator(shardIDs, opt)
-		return err
-	}(); err != nil {
+	}
+	localIC, err := s.Store.IteratorCreator(shardIDs, opt)
+	if err != nil {
 		influxql.IteratorCreators(ics).Close()
 		return nil, err
 	}
-	// append the two slices
+	// iterate over localIC
 	ics = append(ics, localIC)
 	return influxql.IteratorCreators(ics), nil
 }
 
-// ReadShardsToRemote foo
-func (s *TSDBStore) ReadShardsToRemote(w http.ResponseWriter, r *http.Request) {
+// ReadShardToRemote foo
+func (s *TSDBStore) ReadShardToRemote(w http.ResponseWriter, r *http.Request) {
+	var buf bytes.Buffer
+	var since time.Time
 	cmd := ReadShardCommand{}
 	reqBody, err := ioutil.ReadAll(r.Body)
 	defer r.Body.Close()
@@ -310,14 +293,23 @@ func (s *TSDBStore) ReadShardsToRemote(w http.ResponseWriter, r *http.Request) {
 
 	// shards := s.Store.Shards(cmd.GetShardIDs())
 
-	for _, shardID := range cmd.GetShardIDs() {
-		var buf bytes.Buffer
-		since, err := time.Parse(time.RFC3339Nano, strconv.FormatInt(cmd.GetStartTime(), 64))
-		err = s.Store.BackupShard(shardID, since, &buf)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		log.Printf("shard read = %s", buf.String())
+	// respShard := &ReadShardCommand_Shard{}
+	// var respShards []*ReadShardCommand_Shard
+	// respShards = make([]*ReadShardCommand_Shard, 0)
+	// for _, shardID := range cmd.GetShardIDs() {
+	since, err = time.Parse(time.RFC3339Nano, strconv.FormatInt(cmd.GetStartTime(), 64))
+	err = s.Store.BackupShard(cmd.GetShardID(), since, &buf)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
+	shardID := cmd.GetShardID()
+	resp := &ReadShardCommand{ShardID: &shardID, Points: buf.Bytes()}
+	// respShards = append(respShards, respShard)
+	log.Printf("shard read = %s", buf.String())
+	// }
+	// resp := &ReadShardCommand{Shards: respShards}
+	data, err := proto.Marshal(resp)
+	w.Write(data)
+	// time.Parse(time.RFC3339Nano, s)
 }

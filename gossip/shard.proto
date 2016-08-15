@@ -13,10 +13,7 @@ message WriteShardCommand {
 }
 
 message ReadShardCommand {
-  repeated uint64 shardIDs = 1;
+  required uint64 shardID = 1;
   required int64 startTime = 2;
-  message Shard {
-    repeated bytes points = 1;
-  }
-  repeated Shard shards = 3;
+  optional bytes points = 3;
 }
