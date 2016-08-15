@@ -8,12 +8,9 @@ import (
 	"log"
 	"net/http"
 	"os"
-<<<<<<< 4d7c411a23998b8aaa61c6aa6c61805c5e616e9e
-	"sync"
-=======
 	"strconv"
+	"sync"
 	"time"
->>>>>>> WIP - Added remote iterator. Will be used to get remote shard.
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/influxdata/influxdb/influxql"
