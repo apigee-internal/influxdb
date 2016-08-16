@@ -357,9 +357,12 @@ func (c *Client) aliveNodeIDs() ([]uint64, error) {
 }
 
 func (c *Client) aliveNodes() ([]NodesList, error) {
-	url := viper.GetString("CFLUX_ENDPOINT") + "/nodes/" + url.QueryEscape(viper.GetString("CLUSTER"))
-	req, err := http.NewRequest("GET", url, nil)
-	resp, err := c.ExpBackoffRequest(*req)
+	f := func() (*http.Request, error) {
+		url := viper.GetString("CFLUX_ENDPOINT") + "/nodes/" + url.QueryEscape(viper.GetString("CLUSTER"))
+		return http.NewRequest("GET", url, nil)
+	}
+
+	resp, err := c.ExpBackoffRequest(f)
 	if err != nil {
 		return nil, err
 	}
@@ -373,9 +376,12 @@ func (c *Client) aliveNodes() ([]NodesList, error) {
 
 // AliveNodesMap foo
 func (c *Client) AliveNodesMap() (map[uint64]NodesList, error) {
-	url := viper.GetString("CFLUX_ENDPOINT") + "/nodes/" + url.QueryEscape(viper.GetString("CLUSTER"))
-	req, err := http.NewRequest("GET", url, nil)
-	resp, err := c.ExpBackoffRequest(*req)
+	f := func() (*http.Request, error) {
+		url := viper.GetString("CFLUX_ENDPOINT") + "/nodes/" + url.QueryEscape(viper.GetString("CLUSTER"))
+		return http.NewRequest("GET", url, nil)
+	}
+
+	resp, err := c.ExpBackoffRequest(f)
 	if err != nil {
 		return nil, err
 	}
@@ -520,14 +526,18 @@ func (c *Client) updateData(response ClusterResponse) (meta.Data, error) {
 }
 
 func (c *Client) postToCflux(cluster string) (ClusterResponse, error) {
-	url := viper.GetString("CFLUX_ENDPOINT") + "/clusters/" + url.QueryEscape(cluster) + "/versions/" + c.dataVersion
 	cdata := c.Data()
 	data, err := (&cdata).MarshalBinary()
 	if err != nil {
 		return ClusterResponse{}, err
 	}
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(data))
-	resp, err := c.ExpBackoffRequest(*req)
+
+	f := func() (*http.Request, error) {
+		url := viper.GetString("CFLUX_ENDPOINT") + "/clusters/" + url.QueryEscape(cluster) + "/versions/" + c.dataVersion
+		return http.NewRequest("POST", url, bytes.NewBuffer(data))
+	}
+
+	resp, err := c.ExpBackoffRequest(f)
 	if err != nil {
 		return ClusterResponse{}, err
 	}
@@ -568,11 +578,12 @@ func (c *Client) syncWithCluster(cluster string) {
 }
 
 func (c *Client) sync(cluster string) error {
-	url := viper.GetString("CFLUX_ENDPOINT") + "/clusters/" + url.QueryEscape(cluster) + "/versions/" + c.dataVersion
-	req, err := http.NewRequest("GET", url, nil)
-
+	f := func() (*http.Request, error) {
+		url := viper.GetString("CFLUX_ENDPOINT") + "/clusters/" + url.QueryEscape(cluster) + "/versions/" + c.dataVersion
+		return http.NewRequest("GET", url, nil)
+	}
 	c.logger.Println("Polling for updates from Clusterflux.")
-	resp, err := c.ExpBackoffRequest(*req)
+	resp, err := c.ExpBackoffRequest(f)
 	if err != nil {
 		return err
 	}
@@ -598,13 +609,18 @@ func (c *Client) sync(cluster string) error {
 }
 
 // ExpBackoffRequest foo
-func (c *Client) ExpBackoffRequest(req http.Request) (*http.Response, error) {
+func (c *Client) ExpBackoffRequest(f func() (*http.Request, error)) (*http.Response, error) {
 	client := &http.Client{}
 	var resp *http.Response
+	var req *http.Request
 	var err error
 
 	for attempt := 1; attempt < 6; attempt++ {
-		resp, err = client.Do(&req)
+		req, err = f()
+		if err != nil {
+			return nil, err
+		}
+		resp, err = client.Do(req)
 		if err == nil {
 			return resp, err
 		}
@@ -636,9 +652,12 @@ func (c *Client) registerNode() error {
 	if err != nil {
 		return err
 	}
-	url := viper.GetString("CFLUX_ENDPOINT") + "/nodes/" + viper.GetString("CLUSTER")
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(data))
-	resp, err := c.ExpBackoffRequest(*req)
+	f := func() (*http.Request, error) {
+		url := viper.GetString("CFLUX_ENDPOINT") + "/nodes/" + viper.GetString("CLUSTER")
+		return http.NewRequest("POST", url, bytes.NewBuffer(data))
+	}
+
+	resp, err := c.ExpBackoffRequest(f)
 	if err != nil {
 		c.logger.Println("Failed to Register InfluxDB on Clusterflux")
 		return err
@@ -690,9 +709,12 @@ func (c *Client) heartbeat() {
 }
 
 func (c *Client) ping() (ClusterResponse, error) {
-	url := viper.GetString("CFLUX_ENDPOINT") + "/nodes/" + viper.GetString("CLUSTER") + "/" + strconv.FormatUint(c.ID, 10)
-	req, err := http.NewRequest("PUT", url, nil)
-	resp, err := c.ExpBackoffRequest(*req)
+	f := func() (*http.Request, error) {
+		url := viper.GetString("CFLUX_ENDPOINT") + "/nodes/" + viper.GetString("CLUSTER") + "/" + strconv.FormatUint(c.ID, 10)
+		return http.NewRequest("PUT", url, nil)
+	}
+
+	resp, err := c.ExpBackoffRequest(f)
 	response, err := c.readResponse(resp)
 	c.logger.Println("response status :", response.Status)
 	c.logger.Println("response body :", string(response.Body))
