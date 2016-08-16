@@ -177,7 +177,6 @@ func (s *TSDBStore) WriteToShardLocal(w http.ResponseWriter, r *http.Request) {
 
 // CreateShardOnNode foo
 func (s *TSDBStore) CreateShardOnNode(node cflux.NodesList, database string, retentionPolicy string, shardID uint64, enabled bool) error {
-	url := "http://" + node.BindAddress + "/create"
 	cmd := &CreateShardCommmand{Database: database,
 		RetentionPolicy: retentionPolicy,
 		ShardID:         shardID,
@@ -185,8 +184,12 @@ func (s *TSDBStore) CreateShardOnNode(node cflux.NodesList, database string, ret
 
 	data, err := proto.Marshal(cmd)
 
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(data))
-	_, err = s.Client.ExpBackoffRequest(*req)
+	f := func() (*http.Request, error) {
+		url := "http://" + node.BindAddress + "/create"
+		return http.NewRequest("POST", url, bytes.NewBuffer(data))
+	}
+
+	_, err = ExpBackoffRequest(f)
 	if err != nil {
 		s.Logger.Printf("Failed to create shard on remote node with ID: %d", node.ID)
 		return err
