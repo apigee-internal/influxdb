@@ -27,17 +27,17 @@ type RemoteIteratorCreator struct {
 
 // NodesList is used to return list of nodes
 type NodesList struct {
-	ID       uint64 `json:"id"`
-	IP       string `json:"ip"`
-	Hostname string `json:"hostname"`
-	BindAddr string `json:"bind-address"`
-	Alive    bool   `json:"alive"`
+	ID          uint64 `json:"id"`
+	IP          string `json:"ip"`
+	Hostname    string `json:"hostname"`
+	BindAddress string `json:"bindAddress"`
+	Alive       bool   `json:"alive"`
 }
 
 // CreateIterator Creates a simple iterator for use in an InfluxQL query for the remote node
 func (ric *RemoteIteratorCreator) CreateIterator(opt influxql.IteratorOptions) (influxql.Iterator, error) {
 	aliveNodes, err := AliveNodesMap()
-	log.Printf("************* NodeID = %d, aliveNodes = %v", ric.NodeID, aliveNodes[ric.NodeID])
+	log.Printf("************* NodeID = %d, aliveNodes = %+v", ric.NodeID, aliveNodes[ric.NodeID])
 
 	optBinary, err := opt.MarshalBinary()
 	if err != nil {
@@ -57,7 +57,7 @@ func (ric *RemoteIteratorCreator) CreateIterator(opt influxql.IteratorOptions) (
 	}
 
 	f := func() (*http.Request, error) {
-		url := "http://" + aliveNodes[ric.NodeID].BindAddr + "/read"
+		url := "http://" + aliveNodes[ric.NodeID].BindAddress + "/read"
 		return http.NewRequest("POST", url, bytes.NewBuffer(data))
 	}
 
@@ -119,7 +119,8 @@ func (ric *RemoteIteratorCreator) FieldDimensions(sources influxql.Sources) (fie
 		return nil, nil, err
 	}
 	f := func() (*http.Request, error) {
-		url := "http://" + aliveNodes[ric.NodeID].BindAddr + "/fielddimensions"
+		log.Printf("ric.NodeID=%d, aliveNodes[ric.NodeID]=%+v", ric.NodeID, aliveNodes[ric.NodeID])
+		url := "http://" + aliveNodes[ric.NodeID].BindAddress + "/fielddimensions"
 		return http.NewRequest("POST", url, bytes.NewBuffer(fdcBinary))
 	}
 
@@ -177,7 +178,7 @@ func (ric *RemoteIteratorCreator) ExpandSources(sources influxql.Sources) (influ
 	}
 
 	f := func() (*http.Request, error) {
-		url := "http://" + aliveNodes[ric.NodeID].BindAddr + "/expandsources"
+		url := "http://" + aliveNodes[ric.NodeID].BindAddress + "/expandsources"
 		return http.NewRequest("POST", url, bytes.NewBuffer(cmdBinary))
 	}
 	resp, err := ExpBackoffRequest(f)
@@ -227,7 +228,7 @@ func AliveNodesMap() (map[uint64]NodesList, error) {
 	}
 	for _, node := range nodeList {
 		nodeMap[node.ID] = node
-		log.Printf("***** assign alive to %d = %v", node.ID, node)
+		log.Printf("***** assign alive to %d = %+v", node.ID, node)
 	}
 	return nodeMap, nil
 }
@@ -241,7 +242,7 @@ func ExpBackoffRequest(f func() (*http.Request, error)) (*http.Response, error) 
 
 	for attempt := 1; attempt < 6; attempt++ {
 		req, err = f()
-		log.Printf("req=%v", req)
+		log.Printf("req=%+v", req)
 		if err != nil {
 			return nil, err
 		}

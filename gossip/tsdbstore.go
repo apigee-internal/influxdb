@@ -263,6 +263,7 @@ func (s *TSDBStore) IteratorCreator(shards []meta.ShardInfo, opt *influxql.Selec
 			}
 		}
 		if isRemote == 1 {
+			s.Logger.Printf("Shard Owners=%+v", sh)
 			s.Logger.Printf("remote Shard: %d, node: %d", sh.ID, sh.Owners[0].NodeID)
 			ric := &remoteShardIteratorCreator{sh: &RemoteIteratorCreator{Store: s, ShardID: sh.ID, NodeID: sh.Owners[0].NodeID}}
 			ics = append(ics, ric)
