@@ -153,6 +153,10 @@ func (c *Config) Validate() error {
 		return err
 	}
 
+	if err := c.Cflux.Validate(); err != nil {
+		return err
+	}
+
 	if err := c.Data.Validate(); err != nil {
 		return err
 	}

@@ -101,10 +101,12 @@ func (c *Client) Open() error {
 	if err != nil {
 		return err
 	}
-	_, err = c.postToCflux(viper.GetString("CLUSTER"))
-	if err != nil {
-		return err
-	}
+	// This commented out code could be used to avoid key not found logs during a fresh setup of cluster
+	// Commenting it out as it takes a lot of time on kubernetes (works fine on local machine!) Should figure out a better way.
+	// _, err = c.postToCflux(viper.GetString("CLUSTER"))
+	// if err != nil {
+	// 	return err
+	// }
 	c.logger.Println("Setting up node")
 	err = c.nodeSetup()
 	if err != nil {
@@ -693,6 +695,9 @@ func (c *Client) getNodeMetaData() Metadata {
 	}
 	ip := buffer.String()
 	bindaddress := viper.GetString("BIND_ADDRESS")
+	if bindaddress == "" {
+		bindaddress = addrs[0].To4().String() + ":8888"
+	}
 	return Metadata{ip, hostname, bindaddress}
 }
 
