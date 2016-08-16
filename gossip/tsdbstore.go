@@ -201,7 +201,6 @@ func (s *TSDBStore) CreateShardOnNode(node cflux.NodesList, database string, ret
 
 // WriteToShardOnNode foo
 func (s *TSDBStore) WriteToShardOnNode(node cflux.NodesList, shardID uint64, points []models.Point) error {
-	url := "http://" + node.BindAddr + "/write"
 	pnts := make([][]byte, 0, len(points))
 	for _, point := range points {
 		data, err := point.MarshalBinary()
@@ -217,8 +216,12 @@ func (s *TSDBStore) WriteToShardOnNode(node cflux.NodesList, shardID uint64, poi
 
 	data, err := proto.Marshal(cmd)
 
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(data))
-	_, err = ExpBackoffRequest(*req)
+	f := func() (*http.Request, error) {
+		url := "http://" + node.BindAddr + "/write"
+		return http.NewRequest("POST", url, bytes.NewBuffer(data))
+	}
+
+	_, err = ExpBackoffRequest(f)
 	if err != nil {
 		s.Logger.Printf("Failed to write shard to remote node with ID: %d", node.ID)
 		return err
@@ -246,7 +249,6 @@ func (ic *remoteShardIteratorCreator) ExpandSources(sources influxql.Sources) (i
 func (s *TSDBStore) IteratorCreator(shards []meta.ShardInfo, opt *influxql.SelectOptions) (influxql.IteratorCreator, error) {
 	s.Logger.Println("Inside tsdb IteratorCreator")
 	var localShardIDs []uint64
-	// localShardIDs = make([]uint64, 0)
 	var ics []influxql.IteratorCreator
 	ics = make([]influxql.IteratorCreator, 0)
 	for _, sh := range shards {

@@ -38,7 +38,6 @@ type NodesList struct {
 func (ric *RemoteIteratorCreator) CreateIterator(opt influxql.IteratorOptions) (influxql.Iterator, error) {
 	aliveNodes, err := AliveNodesMap()
 	log.Printf("************* NodeID = %d, aliveNodes = %v", ric.NodeID, aliveNodes[ric.NodeID])
-	url := "http://" + aliveNodes[ric.NodeID].BindAddr + "/read"
 
 	optBinary, err := opt.MarshalBinary()
 	if err != nil {
@@ -57,8 +56,12 @@ func (ric *RemoteIteratorCreator) CreateIterator(opt influxql.IteratorOptions) (
 		return nil, err
 	}
 
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(data))
-	resp, err := ExpBackoffRequest(*req)
+	f := func() (*http.Request, error) {
+		url := "http://" + aliveNodes[ric.NodeID].BindAddr + "/read"
+		return http.NewRequest("POST", url, bytes.NewBuffer(data))
+	}
+
+	resp, err := ExpBackoffRequest(f)
 	if err != nil {
 		log.Printf("Failed to read shards from remote node with ID: %d", ric.NodeID)
 		return nil, err
@@ -66,7 +69,6 @@ func (ric *RemoteIteratorCreator) CreateIterator(opt influxql.IteratorOptions) (
 
 	respMessage := &ReadShardCommandResponse{}
 	respBody, err := ioutil.ReadAll(resp.Body)
-	// defer resp.Body.Close()
 	if err != nil {
 		log.Printf("Failed while reading received http body: %s", err.Error())
 		return nil, err
@@ -116,9 +118,12 @@ func (ric *RemoteIteratorCreator) FieldDimensions(sources influxql.Sources) (fie
 	if err != nil {
 		return nil, nil, err
 	}
-	url := "http://" + aliveNodes[ric.NodeID].BindAddr + "/fielddimensions"
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(fdcBinary))
-	resp, err := ExpBackoffRequest(*req)
+	f := func() (*http.Request, error) {
+		url := "http://" + aliveNodes[ric.NodeID].BindAddr + "/fielddimensions"
+		return http.NewRequest("POST", url, bytes.NewBuffer(fdcBinary))
+	}
+
+	resp, err := ExpBackoffRequest(f)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -170,9 +175,12 @@ func (ric *RemoteIteratorCreator) ExpandSources(sources influxql.Sources) (influ
 	if err != nil {
 		return nil, err
 	}
-	url := "http://" + aliveNodes[ric.NodeID].BindAddr + "/expandsources"
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(cmdBinary))
-	resp, err := ExpBackoffRequest(*req)
+
+	f := func() (*http.Request, error) {
+		url := "http://" + aliveNodes[ric.NodeID].BindAddr + "/expandsources"
+		return http.NewRequest("POST", url, bytes.NewBuffer(cmdBinary))
+	}
+	resp, err := ExpBackoffRequest(f)
 	if err != nil {
 		return nil, err
 	}
@@ -203,9 +211,11 @@ func (ric *RemoteIteratorCreator) ExpandSources(sources influxql.Sources) (influ
 
 // AliveNodesMap foo
 func AliveNodesMap() (map[uint64]NodesList, error) {
-	url := viper.GetString("CFLUX_ENDPOINT") + "/nodes/" + url.QueryEscape(viper.GetString("CLUSTER"))
-	req, err := http.NewRequest("GET", url, nil)
-	resp, err := ExpBackoffRequest(*req)
+	f := func() (*http.Request, error) {
+		url := viper.GetString("CFLUX_ENDPOINT") + "/nodes/" + url.QueryEscape(viper.GetString("CLUSTER"))
+		return http.NewRequest("GET", url, nil)
+	}
+	resp, err := ExpBackoffRequest(f)
 	if err != nil {
 		return nil, err
 	}
@@ -223,13 +233,18 @@ func AliveNodesMap() (map[uint64]NodesList, error) {
 }
 
 // ExpBackoffRequest foo
-func ExpBackoffRequest(req http.Request) (*http.Response, error) {
+func ExpBackoffRequest(f func() (*http.Request, error)) (*http.Response, error) {
 	client := &http.Client{}
 	var resp *http.Response
+	var req *http.Request
 	var err error
 
 	for attempt := 1; attempt < 6; attempt++ {
-		resp, err = client.Do(&req)
+		req, err = f()
+		if err != nil {
+			return nil, err
+		}
+		resp, err = client.Do(req)
 		if err == nil {
 			return resp, err
 		}
