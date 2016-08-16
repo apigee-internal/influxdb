@@ -69,6 +69,7 @@ func (ric *RemoteIteratorCreator) CreateIterator(opt influxql.IteratorOptions) (
 
 	respMessage := &ReadShardCommandResponse{}
 	respBody, err := ioutil.ReadAll(resp.Body)
+	defer resp.Body.Close()
 	if err != nil {
 		log.Printf("Failed while reading received http body: %s", err.Error())
 		return nil, err
@@ -79,21 +80,18 @@ func (ric *RemoteIteratorCreator) CreateIterator(opt influxql.IteratorOptions) (
 		return nil, err
 	}
 
-	dec := influxql.NewPointDecoder(resp.Body)
+	dec := influxql.NewPointDecoder(bytes.NewReader(respMessage.Points))
 	var iter influxql.Iterator
 	iterType := respMessage.Type
-	closeBody := func() {
-		resp.Body.Close()
-	}
 	switch iterType {
 	case ReadShardCommandResponse_FLOAT:
-		iter = &RemoteFloatIterator{PointDecoder: dec, Closed: false, CloseReader: closeBody}
+		iter = &RemoteFloatIterator{PointDecoder: dec, Closed: false}
 	case ReadShardCommandResponse_INTEGER:
-		iter = &RemoteIntegerIterator{PointDecoder: dec, Closed: false, CloseReader: closeBody}
+		iter = &RemoteIntegerIterator{PointDecoder: dec, Closed: false}
 	case ReadShardCommandResponse_STRING:
-		iter = &RemoteStringIterator{PointDecoder: dec, Closed: false, CloseReader: closeBody}
+		iter = &RemoteStringIterator{PointDecoder: dec, Closed: false}
 	case ReadShardCommandResponse_BOOLEAN:
-		iter = &RemoteBooleanIterator{PointDecoder: dec, Closed: false, CloseReader: closeBody}
+		iter = &RemoteBooleanIterator{PointDecoder: dec, Closed: false}
 	default:
 		return nil, fmt.Errorf("Unsupported iterator type: %d", iterType)
 	}

@@ -11,7 +11,6 @@ import (
 type RemoteFloatIterator struct {
 	PointDecoder *influxql.PointDecoder
 	Closed       bool
-	CloseReader  func()
 }
 
 // Stats foo
@@ -22,7 +21,6 @@ func (rfi RemoteFloatIterator) Stats() influxql.IteratorStats {
 // Close foo
 func (rfi RemoteFloatIterator) Close() error {
 	rfi.Closed = true
-	rfi.CloseReader()
 	return nil
 }
 
@@ -33,7 +31,6 @@ func (rfi RemoteFloatIterator) Next() (*influxql.FloatPoint, error) {
 	}
 	point, err := getPoint(rfi.PointDecoder)
 	if err != nil || point == nil {
-		rfi.CloseReader()
 		return nil, err
 	}
 	return point.(*influxql.FloatPoint), nil
@@ -43,7 +40,6 @@ func (rfi RemoteFloatIterator) Next() (*influxql.FloatPoint, error) {
 type RemoteIntegerIterator struct {
 	PointDecoder *influxql.PointDecoder
 	Closed       bool
-	CloseReader  func()
 }
 
 // Stats foo
@@ -54,7 +50,6 @@ func (rii RemoteIntegerIterator) Stats() influxql.IteratorStats {
 // Close foo
 func (rii RemoteIntegerIterator) Close() error {
 	rii.Closed = true
-	rii.CloseReader()
 	return nil
 }
 
@@ -65,7 +60,6 @@ func (rii RemoteIntegerIterator) Next() (*influxql.IntegerPoint, error) {
 	}
 	point, err := getPoint(rii.PointDecoder)
 	if err != nil || point == nil {
-		rii.CloseReader()
 		return nil, err
 	}
 	return point.(*influxql.IntegerPoint), nil
@@ -75,7 +69,6 @@ func (rii RemoteIntegerIterator) Next() (*influxql.IntegerPoint, error) {
 type RemoteStringIterator struct {
 	PointDecoder *influxql.PointDecoder
 	Closed       bool
-	CloseReader  func()
 }
 
 // Stats foo
@@ -86,7 +79,6 @@ func (rsi RemoteStringIterator) Stats() influxql.IteratorStats {
 // Close foo
 func (rsi RemoteStringIterator) Close() error {
 	rsi.Closed = true
-	rsi.CloseReader()
 	return nil
 }
 
@@ -97,7 +89,6 @@ func (rsi RemoteStringIterator) Next() (*influxql.StringPoint, error) {
 	}
 	point, err := getPoint(rsi.PointDecoder)
 	if err != nil || point == nil {
-		rsi.CloseReader()
 		return nil, err
 	}
 	return point.(*influxql.StringPoint), nil
@@ -107,7 +98,6 @@ func (rsi RemoteStringIterator) Next() (*influxql.StringPoint, error) {
 type RemoteBooleanIterator struct {
 	PointDecoder *influxql.PointDecoder
 	Closed       bool
-	CloseReader  func()
 }
 
 // Stats foo
@@ -118,7 +108,6 @@ func (rbi RemoteBooleanIterator) Stats() influxql.IteratorStats {
 // Close foo
 func (rbi RemoteBooleanIterator) Close() error {
 	rbi.Closed = true
-	rbi.CloseReader()
 	return nil
 }
 
@@ -129,7 +118,6 @@ func (rbi RemoteBooleanIterator) Next() (*influxql.BooleanPoint, error) {
 	}
 	point, err := getPoint(rbi.PointDecoder)
 	if err != nil || point == nil {
-		rbi.CloseReader()
 		return nil, err
 	}
 	return point.(*influxql.BooleanPoint), nil

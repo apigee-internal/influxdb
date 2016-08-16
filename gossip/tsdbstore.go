@@ -342,7 +342,7 @@ func (s *TSDBStore) ReadShardToRemote(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := &ReadShardCommandResponse{ShardID: shardID, Type: iterType, Points: buf.Bytes()}
-	log.Printf("shard read = %s", buf.String())
+	// log.Printf("shard read = %s", buf.String())
 
 	data, err := proto.Marshal(resp)
 	if err != nil {
