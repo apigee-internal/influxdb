@@ -1,19 +1,52 @@
+syntax = "proto3";
 package gossip;
 
 message CreateShardCommmand {
-  required string database = 1;
-  required string retentionPolicy = 2;
-  required uint64 shardID = 3;
-  required bool enabled = 4;
+  string database = 1;
+  string retentionPolicy = 2;
+  uint64 shardID = 3;
+  bool enabled = 4;
 }
 
 message WriteShardCommand {
-  required uint64 shardID = 1;
+  uint64 shardID = 1;
   repeated bytes points = 2;
 }
 
 message ReadShardCommand {
-  required uint64 shardID = 1;
-  optional int64 startTime = 2;
-  optional bytes points = 3;
+  uint64 shardID = 1;
+  bytes iteratorOptions = 2;
+}
+
+message ReadShardCommandResponse {
+  uint64 shardID = 1;
+  enum IteratorType {
+    FLOAT = 0;
+    INTEGER = 1;
+    STRING = 2;
+    BOOLEAN = 3;
+  }
+  IteratorType type = 2;
+  bytes points = 3;
+}
+
+message FieldDimensionsCommand {
+  uint64 shardID  = 1;
+  bytes sources = 2;
+}
+
+message FieldDimensionsCommandResponse {
+  map<string, uint32> fields = 1;
+  repeated string dimensions = 2;
+  string error = 3;
+}
+
+message ExpandSourcesCommand {
+  uint64 shardID  = 1;
+  bytes sources = 2;
+}
+
+message ExpandSourcesCommandResponse {
+  bytes sources = 1;
+  string error = 2;
 }

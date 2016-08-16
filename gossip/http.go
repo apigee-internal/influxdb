@@ -55,9 +55,21 @@ func (s *TSDBStore) NewRouter() *mux.Router {
 		},
 		Route{
 			"Read",
-			"GET",
-			"/read/shards",
+			"POST",
+			"/read",
 			s.ReadShardToRemote,
+		},
+		Route{
+			"FieldDimensions",
+			"POST",
+			"/fielddimensions",
+			s.FieldDimensions,
+		},
+		Route{
+			"ExpandSources",
+			"POST",
+			"/expandsources",
+			s.ExpandSources,
 		},
 	}
 

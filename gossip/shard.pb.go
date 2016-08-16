@@ -12,6 +12,11 @@ It has these top-level messages:
 	CreateShardCommmand
 	WriteShardCommand
 	ReadShardCommand
+	ReadShardCommandResponse
+	FieldDimensionsCommand
+	FieldDimensionsCommandResponse
+	ExpandSourcesCommand
+	ExpandSourcesCommandResponse
 */
 package gossip
 
@@ -30,12 +35,40 @@ var _ = math.Inf
 // proto package needs to be updated.
 const _ = proto.ProtoPackageIsVersion2 // please upgrade the proto package
 
+type ReadShardCommandResponse_IteratorType int32
+
+const (
+	ReadShardCommandResponse_FLOAT   ReadShardCommandResponse_IteratorType = 0
+	ReadShardCommandResponse_INTEGER ReadShardCommandResponse_IteratorType = 1
+	ReadShardCommandResponse_STRING  ReadShardCommandResponse_IteratorType = 2
+	ReadShardCommandResponse_BOOLEAN ReadShardCommandResponse_IteratorType = 3
+)
+
+var ReadShardCommandResponse_IteratorType_name = map[int32]string{
+	0: "FLOAT",
+	1: "INTEGER",
+	2: "STRING",
+	3: "BOOLEAN",
+}
+var ReadShardCommandResponse_IteratorType_value = map[string]int32{
+	"FLOAT":   0,
+	"INTEGER": 1,
+	"STRING":  2,
+	"BOOLEAN": 3,
+}
+
+func (x ReadShardCommandResponse_IteratorType) String() string {
+	return proto.EnumName(ReadShardCommandResponse_IteratorType_name, int32(x))
+}
+func (ReadShardCommandResponse_IteratorType) EnumDescriptor() ([]byte, []int) {
+	return fileDescriptor0, []int{3, 0}
+}
+
 type CreateShardCommmand struct {
-	Database         *string `protobuf:"bytes,1,req,name=database" json:"database,omitempty"`
-	RetentionPolicy  *string `protobuf:"bytes,2,req,name=retentionPolicy" json:"retentionPolicy,omitempty"`
-	ShardID          *uint64 `protobuf:"varint,3,req,name=shardID" json:"shardID,omitempty"`
-	Enabled          *bool   `protobuf:"varint,4,req,name=enabled" json:"enabled,omitempty"`
-	XXX_unrecognized []byte  `json:"-"`
+	Database        string `protobuf:"bytes,1,opt,name=database" json:"database,omitempty"`
+	RetentionPolicy string `protobuf:"bytes,2,opt,name=retentionPolicy" json:"retentionPolicy,omitempty"`
+	ShardID         uint64 `protobuf:"varint,3,opt,name=shardID" json:"shardID,omitempty"`
+	Enabled         bool   `protobuf:"varint,4,opt,name=enabled" json:"enabled,omitempty"`
 }
 
 func (m *CreateShardCommmand) Reset()                    { *m = CreateShardCommmand{} }
@@ -43,38 +76,9 @@ func (m *CreateShardCommmand) String() string            { return proto.CompactT
 func (*CreateShardCommmand) ProtoMessage()               {}
 func (*CreateShardCommmand) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{0} }
 
-func (m *CreateShardCommmand) GetDatabase() string {
-	if m != nil && m.Database != nil {
-		return *m.Database
-	}
-	return ""
-}
-
-func (m *CreateShardCommmand) GetRetentionPolicy() string {
-	if m != nil && m.RetentionPolicy != nil {
-		return *m.RetentionPolicy
-	}
-	return ""
-}
-
-func (m *CreateShardCommmand) GetShardID() uint64 {
-	if m != nil && m.ShardID != nil {
-		return *m.ShardID
-	}
-	return 0
-}
-
-func (m *CreateShardCommmand) GetEnabled() bool {
-	if m != nil && m.Enabled != nil {
-		return *m.Enabled
-	}
-	return false
-}
-
 type WriteShardCommand struct {
-	ShardID          *uint64  `protobuf:"varint,1,req,name=shardID" json:"shardID,omitempty"`
-	Points           [][]byte `protobuf:"bytes,2,rep,name=points" json:"points,omitempty"`
-	XXX_unrecognized []byte   `json:"-"`
+	ShardID uint64   `protobuf:"varint,1,opt,name=shardID" json:"shardID,omitempty"`
+	Points  [][]byte `protobuf:"bytes,2,rep,name=points,proto3" json:"points,omitempty"`
 }
 
 func (m *WriteShardCommand) Reset()                    { *m = WriteShardCommand{} }
@@ -82,25 +86,9 @@ func (m *WriteShardCommand) String() string            { return proto.CompactTex
 func (*WriteShardCommand) ProtoMessage()               {}
 func (*WriteShardCommand) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{1} }
 
-func (m *WriteShardCommand) GetShardID() uint64 {
-	if m != nil && m.ShardID != nil {
-		return *m.ShardID
-	}
-	return 0
-}
-
-func (m *WriteShardCommand) GetPoints() [][]byte {
-	if m != nil {
-		return m.Points
-	}
-	return nil
-}
-
 type ReadShardCommand struct {
-	ShardID          *uint64 `protobuf:"varint,1,req,name=shardID" json:"shardID,omitempty"`
-	StartTime        *int64  `protobuf:"varint,2,opt,name=startTime" json:"startTime,omitempty"`
-	Points           []byte  `protobuf:"bytes,3,opt,name=points" json:"points,omitempty"`
-	XXX_unrecognized []byte  `json:"-"`
+	ShardID         uint64 `protobuf:"varint,1,opt,name=shardID" json:"shardID,omitempty"`
+	IteratorOptions []byte `protobuf:"bytes,2,opt,name=iteratorOptions,proto3" json:"iteratorOptions,omitempty"`
 }
 
 func (m *ReadShardCommand) Reset()                    { *m = ReadShardCommand{} }
@@ -108,47 +96,108 @@ func (m *ReadShardCommand) String() string            { return proto.CompactText
 func (*ReadShardCommand) ProtoMessage()               {}
 func (*ReadShardCommand) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{2} }
 
-func (m *ReadShardCommand) GetShardID() uint64 {
-	if m != nil && m.ShardID != nil {
-		return *m.ShardID
-	}
-	return 0
+type ReadShardCommandResponse struct {
+	ShardID uint64                                `protobuf:"varint,1,opt,name=shardID" json:"shardID,omitempty"`
+	Type    ReadShardCommandResponse_IteratorType `protobuf:"varint,2,opt,name=type,enum=gossip.ReadShardCommandResponse_IteratorType" json:"type,omitempty"`
+	Points  []byte                                `protobuf:"bytes,3,opt,name=points,proto3" json:"points,omitempty"`
 }
 
-func (m *ReadShardCommand) GetStartTime() int64 {
-	if m != nil && m.StartTime != nil {
-		return *m.StartTime
-	}
-	return 0
+func (m *ReadShardCommandResponse) Reset()                    { *m = ReadShardCommandResponse{} }
+func (m *ReadShardCommandResponse) String() string            { return proto.CompactTextString(m) }
+func (*ReadShardCommandResponse) ProtoMessage()               {}
+func (*ReadShardCommandResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{3} }
+
+type FieldDimensionsCommand struct {
+	ShardID uint64 `protobuf:"varint,1,opt,name=shardID" json:"shardID,omitempty"`
+	Sources []byte `protobuf:"bytes,2,opt,name=sources,proto3" json:"sources,omitempty"`
 }
 
-func (m *ReadShardCommand) GetPoints() []byte {
+func (m *FieldDimensionsCommand) Reset()                    { *m = FieldDimensionsCommand{} }
+func (m *FieldDimensionsCommand) String() string            { return proto.CompactTextString(m) }
+func (*FieldDimensionsCommand) ProtoMessage()               {}
+func (*FieldDimensionsCommand) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{4} }
+
+type FieldDimensionsCommandResponse struct {
+	Fields     map[string]uint32 `protobuf:"bytes,1,rep,name=fields" json:"fields,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
+	Dimensions []string          `protobuf:"bytes,2,rep,name=dimensions" json:"dimensions,omitempty"`
+	Error      string            `protobuf:"bytes,3,opt,name=error" json:"error,omitempty"`
+}
+
+func (m *FieldDimensionsCommandResponse) Reset()                    { *m = FieldDimensionsCommandResponse{} }
+func (m *FieldDimensionsCommandResponse) String() string            { return proto.CompactTextString(m) }
+func (*FieldDimensionsCommandResponse) ProtoMessage()               {}
+func (*FieldDimensionsCommandResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{5} }
+
+func (m *FieldDimensionsCommandResponse) GetFields() map[string]uint32 {
 	if m != nil {
-		return m.Points
+		return m.Fields
 	}
 	return nil
 }
+
+type ExpandSourcesCommand struct {
+	ShardID uint64 `protobuf:"varint,1,opt,name=shardID" json:"shardID,omitempty"`
+	Sources []byte `protobuf:"bytes,2,opt,name=sources,proto3" json:"sources,omitempty"`
+}
+
+func (m *ExpandSourcesCommand) Reset()                    { *m = ExpandSourcesCommand{} }
+func (m *ExpandSourcesCommand) String() string            { return proto.CompactTextString(m) }
+func (*ExpandSourcesCommand) ProtoMessage()               {}
+func (*ExpandSourcesCommand) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{6} }
+
+type ExpandSourcesCommandResponse struct {
+	Sources []byte `protobuf:"bytes,1,opt,name=sources,proto3" json:"sources,omitempty"`
+	Error   string `protobuf:"bytes,2,opt,name=error" json:"error,omitempty"`
+}
+
+func (m *ExpandSourcesCommandResponse) Reset()                    { *m = ExpandSourcesCommandResponse{} }
+func (m *ExpandSourcesCommandResponse) String() string            { return proto.CompactTextString(m) }
+func (*ExpandSourcesCommandResponse) ProtoMessage()               {}
+func (*ExpandSourcesCommandResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{7} }
 
 func init() {
 	proto.RegisterType((*CreateShardCommmand)(nil), "gossip.CreateShardCommmand")
 	proto.RegisterType((*WriteShardCommand)(nil), "gossip.WriteShardCommand")
 	proto.RegisterType((*ReadShardCommand)(nil), "gossip.ReadShardCommand")
+	proto.RegisterType((*ReadShardCommandResponse)(nil), "gossip.ReadShardCommandResponse")
+	proto.RegisterType((*FieldDimensionsCommand)(nil), "gossip.FieldDimensionsCommand")
+	proto.RegisterType((*FieldDimensionsCommandResponse)(nil), "gossip.FieldDimensionsCommandResponse")
+	proto.RegisterType((*ExpandSourcesCommand)(nil), "gossip.ExpandSourcesCommand")
+	proto.RegisterType((*ExpandSourcesCommandResponse)(nil), "gossip.ExpandSourcesCommandResponse")
+	proto.RegisterEnum("gossip.ReadShardCommandResponse_IteratorType", ReadShardCommandResponse_IteratorType_name, ReadShardCommandResponse_IteratorType_value)
 }
 
 func init() { proto.RegisterFile("shard.proto", fileDescriptor0) }
 
 var fileDescriptor0 = []byte{
-	// 191 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x09, 0x6e, 0x88, 0x02, 0xff, 0x7c, 0x8d, 0x3f, 0x6f, 0x83, 0x30,
-	0x10, 0x47, 0x05, 0x46, 0x14, 0xae, 0xa8, 0xfc, 0xe9, 0x50, 0x8f, 0x15, 0x13, 0x53, 0xa7, 0x7e,
-	0x03, 0xaa, 0x4a, 0xdd, 0xaa, 0x24, 0x52, 0xe6, 0x23, 0x3e, 0x25, 0x96, 0xb0, 0x8d, 0xec, 0x5b,
-	0xf2, 0xed, 0x63, 0x98, 0x98, 0x32, 0xde, 0x3b, 0xbd, 0xf7, 0x83, 0xd7, 0x70, 0x43, 0xaf, 0xbe,
-	0x16, 0xef, 0xd8, 0x75, 0xf9, 0xd5, 0x85, 0xa0, 0x97, 0x7e, 0x82, 0xf7, 0xd1, 0x13, 0x32, 0x1d,
-	0xd7, 0xe7, 0xe8, 0x8c, 0x31, 0x68, 0x55, 0xd7, 0x40, 0xa1, 0x90, 0x71, 0xc2, 0x40, 0x32, 0xf9,
-	0x4c, 0x87, 0xb2, 0xfb, 0x80, 0xda, 0x13, 0x93, 0x65, 0xed, 0xec, 0xbf, 0x9b, 0xf5, 0xe5, 0x2e,
-	0xd3, 0xed, 0x51, 0xc3, 0xcb, 0x16, 0xfe, 0xfb, 0x91, 0x22, 0x82, 0x6c, 0x05, 0x64, 0x71, 0x9a,
-	0x49, 0xc9, 0x2c, 0x82, 0xa2, 0xff, 0x86, 0xf6, 0xec, 0xf5, 0x6e, 0x62, 0x5d, 0xd8, 0x69, 0xc9,
-	0xa6, 0xbd, 0x41, 0xbe, 0x38, 0x6d, 0x39, 0xc4, 0xae, 0x18, 0xaa, 0xfe, 0x17, 0x9a, 0x03, 0xa1,
-	0x7a, 0x2e, 0xb5, 0x50, 0x06, 0x46, 0xcf, 0x27, 0x6d, 0x28, 0x7a, 0xc9, 0x20, 0x76, 0x1d, 0x11,
-	0xef, 0xea, 0x11, 0x00, 0x00, 0xff, 0xff, 0xfa, 0x1c, 0x9b, 0x08, 0xf7, 0x00, 0x00, 0x00,
+	// 461 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x09, 0x6e, 0x88, 0x02, 0xff, 0xa4, 0x53, 0xd1, 0x6e, 0xd3, 0x30,
+	0x14, 0xc5, 0x4d, 0x97, 0xad, 0xb7, 0x05, 0x82, 0x99, 0xa6, 0x68, 0x42, 0x13, 0xca, 0x53, 0x5f,
+	0xe8, 0x43, 0x79, 0x01, 0x5e, 0x50, 0xd9, 0xb2, 0xa9, 0x53, 0xd5, 0x22, 0xb7, 0x82, 0x67, 0x77,
+	0xb9, 0x40, 0x44, 0x1b, 0x47, 0xb6, 0x87, 0xc8, 0x57, 0xf0, 0x6b, 0xfc, 0x00, 0xff, 0x82, 0xed,
+	0x24, 0x25, 0xad, 0x46, 0x41, 0xda, 0x5b, 0x8f, 0x8f, 0xcf, 0xb9, 0xf7, 0x9c, 0x3a, 0xd0, 0x55,
+	0x5f, 0xb8, 0x4c, 0x06, 0xb9, 0x14, 0x5a, 0x50, 0xff, 0xb3, 0x50, 0x2a, 0xcd, 0xa3, 0x1f, 0x04,
+	0x9e, 0x9e, 0x4b, 0xe4, 0x1a, 0xe7, 0x96, 0x3d, 0x17, 0xeb, 0xf5, 0x9a, 0x67, 0x09, 0x3d, 0x85,
+	0xa3, 0x84, 0x6b, 0xbe, 0xe4, 0x0a, 0x43, 0xf2, 0x9c, 0xf4, 0x3b, 0x6c, 0x83, 0x69, 0x1f, 0x1e,
+	0x4b, 0xd4, 0x98, 0xe9, 0x54, 0x64, 0xef, 0xc5, 0x2a, 0xbd, 0x29, 0xc2, 0x96, 0xbb, 0xb2, 0x7b,
+	0x4c, 0x43, 0x38, 0x74, 0x43, 0xc7, 0x17, 0xa1, 0x67, 0x6e, 0xb4, 0x59, 0x0d, 0x2d, 0x83, 0x19,
+	0x5f, 0xae, 0x30, 0x09, 0xdb, 0x86, 0x39, 0x62, 0x35, 0x8c, 0x62, 0x78, 0xf2, 0x51, 0xa6, 0x8d,
+	0x7d, 0xec, 0x3a, 0x0d, 0x23, 0xb2, 0x6d, 0x74, 0x02, 0x7e, 0x2e, 0xd2, 0x4c, 0x2b, 0xb3, 0x83,
+	0xd7, 0xef, 0xb1, 0x0a, 0x45, 0x1f, 0x20, 0x60, 0xc8, 0x93, 0xff, 0x74, 0x31, 0x91, 0xcc, 0x48,
+	0xc9, 0xb5, 0x90, 0xb3, 0xdc, 0x06, 0x50, 0x2e, 0x52, 0x8f, 0xed, 0x1e, 0x47, 0x3f, 0x09, 0x84,
+	0xbb, 0xc6, 0x0c, 0x55, 0x6e, 0x38, 0xdc, 0x33, 0x60, 0x04, 0x6d, 0x5d, 0xe4, 0xe8, 0x5c, 0x1f,
+	0x0d, 0x5f, 0x0c, 0xca, 0xfa, 0x07, 0x7f, 0x73, 0x1a, 0x8c, 0xab, 0xb1, 0x0b, 0x23, 0x62, 0x4e,
+	0xda, 0x48, 0xea, 0xb9, 0xd5, 0xea, 0xa4, 0x6f, 0xa1, 0xd7, 0xbc, 0x4d, 0x3b, 0x70, 0x70, 0x39,
+	0x99, 0x8d, 0x16, 0xc1, 0x03, 0xda, 0x85, 0xc3, 0xf1, 0x74, 0x11, 0x5f, 0xc5, 0x2c, 0x20, 0x14,
+	0xc0, 0x9f, 0x2f, 0xd8, 0x78, 0x7a, 0x15, 0xb4, 0x2c, 0xf1, 0x6e, 0x36, 0x9b, 0xc4, 0xa3, 0x69,
+	0xe0, 0x45, 0x13, 0x38, 0xb9, 0x4c, 0x71, 0x95, 0x5c, 0xa4, 0x6b, 0xcc, 0x94, 0x4d, 0xf9, 0xef,
+	0xc2, 0x2c, 0x23, 0x6e, 0xe5, 0x0d, 0xd6, 0x45, 0xd5, 0x30, 0xfa, 0x45, 0xe0, 0xec, 0x6e, 0xbb,
+	0x4d, 0x4d, 0xd7, 0xe0, 0x7f, 0xb2, 0x37, 0x94, 0x71, 0xf5, 0xfa, 0xdd, 0xe1, 0xb0, 0xae, 0x63,
+	0xbf, 0xae, 0xa4, 0x55, 0x9c, 0x69, 0x59, 0xb0, 0xca, 0x81, 0x9e, 0x01, 0x24, 0x1b, 0x81, 0x7b,
+	0x03, 0x1d, 0xd6, 0x38, 0xa1, 0xc7, 0x70, 0x80, 0x52, 0x0a, 0xe9, 0x4a, 0xeb, 0xb0, 0x12, 0x9c,
+	0xbe, 0x86, 0x6e, 0xc3, 0x8c, 0x06, 0xe0, 0x7d, 0xc5, 0xa2, 0x7a, 0xe8, 0xf6, 0xa7, 0x95, 0x7d,
+	0xe3, 0xab, 0xdb, 0xf2, 0x0f, 0x7b, 0xc8, 0x4a, 0xf0, 0xa6, 0xf5, 0x8a, 0x44, 0xd7, 0x70, 0x1c,
+	0x7f, 0xcf, 0xcd, 0x5a, 0xf3, 0x32, 0xf0, 0x7d, 0xba, 0x9a, 0xc2, 0xb3, 0xbb, 0xbc, 0xb6, 0xde,
+	0x53, 0xa5, 0x24, 0x5b, 0xca, 0x3f, 0xb1, 0x5a, 0x8d, 0x58, 0x4b, 0xdf, 0x7d, 0xdc, 0x2f, 0x7f,
+	0x07, 0x00, 0x00, 0xff, 0xff, 0xd6, 0xbc, 0x96, 0x8e, 0xeb, 0x03, 0x00, 0x00,
 }

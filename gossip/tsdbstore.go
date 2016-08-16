@@ -4,13 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
-	"strconv"
 	"sync"
-	"time"
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/influxdata/influxdb/influxql"
@@ -137,7 +136,7 @@ func (s *TSDBStore) CreateShardLocal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = s.Store.CreateShard(cmd.GetDatabase(), cmd.GetRetentionPolicy(), cmd.GetShardID(), cmd.GetEnabled())
+	err = s.Store.CreateShard(cmd.Database, cmd.RetentionPolicy, cmd.ShardID, cmd.Enabled)
 	if err != nil {
 		output, _ := json.Marshal(err)
 		buffer := bytes.NewBuffer(output)
@@ -173,7 +172,7 @@ func (s *TSDBStore) WriteToShardLocal(w http.ResponseWriter, r *http.Request) {
 		points = append(points, pt)
 
 	}
-	err = s.Store.WriteToShard(cmd.GetShardID(), points)
+	err = s.Store.WriteToShard(cmd.ShardID, points)
 	if err != nil {
 		output, _ := json.Marshal(err)
 		buffer := bytes.NewBuffer(output)
@@ -184,10 +183,10 @@ func (s *TSDBStore) WriteToShardLocal(w http.ResponseWriter, r *http.Request) {
 // CreateShardOnNode foo
 func (s *TSDBStore) CreateShardOnNode(node cflux.NodesList, database string, retentionPolicy string, shardID uint64, enabled bool) error {
 	url := "http://" + node.BindAddr + "/create"
-	cmd := &CreateShardCommmand{Database: proto.String(database),
-		RetentionPolicy: proto.String(retentionPolicy),
-		ShardID:         proto.Uint64(shardID),
-		Enabled:         proto.Bool(enabled)}
+	cmd := &CreateShardCommmand{Database: database,
+		RetentionPolicy: retentionPolicy,
+		ShardID:         shardID,
+		Enabled:         enabled}
 
 	data, err := proto.Marshal(cmd)
 
@@ -213,7 +212,7 @@ func (s *TSDBStore) WriteToShardOnNode(node cflux.NodesList, shardID uint64, poi
 	}
 
 	cmd := &WriteShardCommand{
-		ShardID: proto.Uint64(shardID),
+		ShardID: shardID,
 		Points:  pnts}
 
 	data, err := proto.Marshal(cmd)
@@ -246,8 +245,8 @@ func (ic *remoteShardIteratorCreator) ExpandSources(sources influxql.Sources) (i
 //IteratorCreator foo
 func (s *TSDBStore) IteratorCreator(shards []meta.ShardInfo, opt *influxql.SelectOptions) (influxql.IteratorCreator, error) {
 	s.Logger.Println("Inside tsdb IteratorCreator")
-	var shardIDs []uint64
-	shardIDs = make([]uint64, 0)
+	var localShardIDs []uint64
+	// localShardIDs = make([]uint64, 0)
 	var ics []influxql.IteratorCreator
 	ics = make([]influxql.IteratorCreator, 0)
 	for _, sh := range shards {
@@ -255,7 +254,7 @@ func (s *TSDBStore) IteratorCreator(shards []meta.ShardInfo, opt *influxql.Selec
 		for _, owner := range sh.Owners {
 			if owner.NodeID == s.Client.ID {
 				s.Logger.Printf("local Shard: %d, node: %d", sh.ID, owner.NodeID)
-				shardIDs = append(shardIDs, sh.ID)
+				localShardIDs = append(localShardIDs, sh.ID)
 				isRemote = 0
 				break
 			}
@@ -268,7 +267,7 @@ func (s *TSDBStore) IteratorCreator(shards []meta.ShardInfo, opt *influxql.Selec
 	}
 
 	if err := func() error {
-		for _, id := range shardIDs {
+		for _, id := range localShardIDs {
 			lic := s.Store.ShardIteratorCreator(id)
 			if lic == nil {
 				continue
@@ -288,7 +287,7 @@ func (s *TSDBStore) IteratorCreator(shards []meta.ShardInfo, opt *influxql.Selec
 func (s *TSDBStore) ReadShardToRemote(w http.ResponseWriter, r *http.Request) {
 	s.Logger.Println("Serving http ReadShardToRemote request")
 	var buf bytes.Buffer
-	var since time.Time
+
 	cmd := ReadShardCommand{}
 	reqBody, err := ioutil.ReadAll(r.Body)
 	defer r.Body.Close()
@@ -297,24 +296,160 @@ func (s *TSDBStore) ReadShardToRemote(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+
 	err = proto.Unmarshal(reqBody, &cmd)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	since, err = time.Parse(time.RFC3339Nano, strconv.FormatInt(cmd.GetStartTime(), 64))
-	err = s.Store.BackupShard(cmd.GetShardID(), since, &buf)
+	optBinary := cmd.IteratorOptions
+	opt := &influxql.IteratorOptions{}
+	err = opt.UnmarshalBinary(optBinary)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	shard := s.Store.Shard(cmd.ShardID)
+
+	iter, err := shard.CreateIterator(*opt)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.Logger.Println("Backup succesful")
-	shardID := cmd.GetShardID()
-	resp := &ReadShardCommand{ShardID: &shardID, Points: buf.Bytes()}
+
+	enc := influxql.NewIteratorEncoder(&buf)
+
+	err = enc.EncodeIterator(iter)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	shardID := cmd.ShardID
+
+	var iterType ReadShardCommandResponse_IteratorType
+	switch iter.(type) {
+	case influxql.FloatIterator:
+		iterType = ReadShardCommandResponse_FLOAT
+	case influxql.IntegerIterator:
+		iterType = ReadShardCommandResponse_INTEGER
+	case influxql.StringIterator:
+		iterType = ReadShardCommandResponse_STRING
+	case influxql.BooleanIterator:
+		iterType = ReadShardCommandResponse_BOOLEAN
+	default:
+		http.Error(w, fmt.Sprintf("unsupported iterator for encoder: %T", iter), http.StatusBadRequest)
+		return
+	}
+
+	resp := &ReadShardCommandResponse{ShardID: shardID, Type: iterType, Points: buf.Bytes()}
 	log.Printf("shard read = %s", buf.String())
+
 	data, err := proto.Marshal(resp)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	s.Logger.Println("Returning from http ReadShardToRemote")
 	w.Write(data)
-	// time.Parse(time.RFC3339Nano, s)
+}
+
+// FieldDimensions foo
+func (s *TSDBStore) FieldDimensions(w http.ResponseWriter, r *http.Request) {
+	cmd := &FieldDimensionsCommand{}
+	reqBody, err := ioutil.ReadAll(r.Body)
+	defer r.Body.Close()
+	if err != nil {
+		log.Printf("Failed while reading received http body: %s", err.Error())
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	err = proto.Unmarshal(reqBody, cmd)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	shard := s.Store.Shard(cmd.ShardID)
+
+	var sources influxql.Sources
+	err = sources.UnmarshalBinary(cmd.Sources)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	resp := &FieldDimensionsCommandResponse{Fields: make(map[string]uint32)}
+	fields, dimensions, err := shard.FieldDimensions(sources)
+	if err != nil {
+		resp.Error = err.Error()
+	} else {
+		for key, value := range fields {
+			resp.Fields[key] = uint32(value)
+		}
+		for key := range dimensions {
+			resp.Dimensions = append(resp.Dimensions, key)
+		}
+	}
+
+	data, err := proto.Marshal(resp)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	s.Logger.Println("Returning from http FieldDimensions")
+	w.Write(data)
+}
+
+// ExpandSources foo
+func (s *TSDBStore) ExpandSources(w http.ResponseWriter, r *http.Request) {
+	cmd := &ExpandSourcesCommand{}
+	reqBody, err := ioutil.ReadAll(r.Body)
+	defer r.Body.Close()
+	if err != nil {
+		log.Printf("Failed while reading received http body: %s", err.Error())
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	err = proto.Unmarshal(reqBody, cmd)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	shard := s.Store.Shard(cmd.ShardID)
+
+	var sources influxql.Sources
+	err = sources.UnmarshalBinary(cmd.Sources)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	resp := &ExpandSourcesCommandResponse{}
+
+	respSources, err := shard.ExpandSources(sources)
+
+	if err != nil {
+		resp.Error = err.Error()
+	} else {
+		resp.Sources, err = respSources.MarshalBinary()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	data, err := proto.Marshal(resp)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	s.Logger.Println("Returning from http ExpandSources")
+	w.Write(data)
 }

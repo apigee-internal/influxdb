@@ -1,116 +1,149 @@
 package gossip
 
 import (
-	"bytes"
-	"encoding/json"
-	"io/ioutil"
+	"io"
 	"log"
-	"math"
-	"net/http"
-	"net/url"
-	"time"
 
-	"github.com/gogo/protobuf/proto"
 	"github.com/influxdata/influxdb/influxql"
-	"github.com/spf13/viper"
 )
 
-// RemoteIteratorCreator implements influxql.IteratorCreator
-type RemoteIteratorCreator struct {
-	Store   *TSDBStore
-	ShardID uint64
-	NodeID  uint64
-	// ShardIDs []uint64
+// RemoteFloatIterator foo
+type RemoteFloatIterator struct {
+	PointDecoder *influxql.PointDecoder
+	Closed       bool
+	CloseReader  func()
 }
 
-// NodesList is used to return list of nodes
-type NodesList struct {
-	ID       uint64 `json:"id"`
-	IP       string `json:"ip"`
-	Hostname string `json:"hostname"`
-	BindAddr string `json:"bind-address"`
-	Alive    bool   `json:"alive"`
+// Stats foo
+func (rfi RemoteFloatIterator) Stats() influxql.IteratorStats {
+	return rfi.PointDecoder.Stats()
 }
 
-// CreateIterator Creates a simple iterator for use in an InfluxQL query for the remote node
-func (ric *RemoteIteratorCreator) CreateIterator(opt influxql.IteratorOptions) (influxql.Iterator, error) {
-	aliveNodes, err := AliveNodesMap()
-	log.Printf("************* NodeID = %d, aliveNodes = %v", ric.NodeID, aliveNodes[ric.NodeID])
-	url := "http://" + aliveNodes[ric.NodeID].BindAddr + "/read"
-	cmd := &ReadShardCommand{
-		ShardID:   &(ric.ShardID),
-		StartTime: &opt.StartTime,
+// Close foo
+func (rfi RemoteFloatIterator) Close() error {
+	rfi.Closed = true
+	rfi.CloseReader()
+	return nil
+}
+
+// Next foo
+func (rfi RemoteFloatIterator) Next() (*influxql.FloatPoint, error) {
+	if rfi.Closed {
+		return nil, nil
 	}
-	data, err := proto.Marshal(cmd)
-	req, err := http.NewRequest("GET", url, bytes.NewBuffer(data))
-	resp, err := ExpBackoffRequest(*req)
-	if err != nil {
-		log.Printf("Failed to read shards from remote node with ID: %d", ric.NodeID)
+	point, err := getPoint(rfi.PointDecoder)
+	if err != nil || point == nil {
+		rfi.CloseReader()
 		return nil, err
 	}
-	body, err := ioutil.ReadAll(resp.Body)
-	defer resp.Body.Close()
-	if err != nil {
-		log.Printf("Error while reading response: %s", err.Error())
+	return point.(*influxql.FloatPoint), nil
+}
+
+// RemoteIntegerIterator foo
+type RemoteIntegerIterator struct {
+	PointDecoder *influxql.PointDecoder
+	Closed       bool
+	CloseReader  func()
+}
+
+// Stats foo
+func (rii RemoteIntegerIterator) Stats() influxql.IteratorStats {
+	return rii.PointDecoder.Stats()
+}
+
+// Close foo
+func (rii RemoteIntegerIterator) Close() error {
+	rii.Closed = true
+	rii.CloseReader()
+	return nil
+}
+
+// Next foo
+func (rii RemoteIntegerIterator) Next() (*influxql.IntegerPoint, error) {
+	if rii.Closed {
+		return nil, nil
 	}
-	respMessage := &ReadShardCommand{}
-	err = proto.Unmarshal(body, respMessage)
-	if err != nil {
-		log.Printf("Error while unmarshaling response: %s", err.Error())
-	}
-	log.Println("Going to Restore to local")
-	ric.Store.RestoreShard(respMessage.GetShardID(), bytes.NewReader(respMessage.GetPoints()))
-	shard := ric.Store.Shard(respMessage.GetShardID())
-	return shard.CreateIterator(opt)
-}
-
-// FieldDimensions Returns the unique fields and dimensions across a list of sources from the remote node
-func (ric *RemoteIteratorCreator) FieldDimensions(sources influxql.Sources) (fields map[string]influxql.DataType, dimensions map[string]struct{}, err error) {
-	shard := ric.Store.Shard(ric.ShardID)
-	return shard.FieldDimensions(sources)
-}
-
-// ExpandSources Expands regex sources to all matching sources for the remote nodes
-func (ric *RemoteIteratorCreator) ExpandSources(sources influxql.Sources) (influxql.Sources, error) {
-	shard := ric.Store.Shard(ric.ShardID)
-	return shard.ExpandSources(sources)
-}
-
-// AliveNodesMap foo
-func AliveNodesMap() (map[uint64]NodesList, error) {
-	url := viper.GetString("CFLUX_ENDPOINT") + "/nodes/" + url.QueryEscape(viper.GetString("CLUSTER"))
-	req, err := http.NewRequest("GET", url, nil)
-	resp, err := ExpBackoffRequest(*req)
-	if err != nil {
+	point, err := getPoint(rii.PointDecoder)
+	if err != nil || point == nil {
+		rii.CloseReader()
 		return nil, err
 	}
-	var nodeList []NodesList
-	nodeMap := map[uint64]NodesList{}
-	err = json.NewDecoder(resp.Body).Decode(&nodeList)
-	if err != nil {
-		return nil, err
-	}
-	for _, node := range nodeList {
-		nodeMap[node.ID] = node
-		log.Printf("***** assign alive to %d = %v", node.ID, node)
-	}
-	return nodeMap, nil
+	return point.(*influxql.IntegerPoint), nil
 }
 
-// ExpBackoffRequest foo
-func ExpBackoffRequest(req http.Request) (*http.Response, error) {
-	client := &http.Client{}
-	var resp *http.Response
-	var err error
+// RemoteStringIterator foo
+type RemoteStringIterator struct {
+	PointDecoder *influxql.PointDecoder
+	Closed       bool
+	CloseReader  func()
+}
 
-	for attempt := 1; attempt < 6; attempt++ {
-		resp, err = client.Do(&req)
-		if err == nil {
-			return resp, err
+// Stats foo
+func (rsi RemoteStringIterator) Stats() influxql.IteratorStats {
+	return rsi.PointDecoder.Stats()
+}
+
+// Close foo
+func (rsi RemoteStringIterator) Close() error {
+	rsi.Closed = true
+	rsi.CloseReader()
+	return nil
+}
+
+// Next foo
+func (rsi RemoteStringIterator) Next() (*influxql.StringPoint, error) {
+	if rsi.Closed {
+		return nil, nil
+	}
+	point, err := getPoint(rsi.PointDecoder)
+	if err != nil || point == nil {
+		rsi.CloseReader()
+		return nil, err
+	}
+	return point.(*influxql.StringPoint), nil
+}
+
+// RemoteBooleanIterator foo
+type RemoteBooleanIterator struct {
+	PointDecoder *influxql.PointDecoder
+	Closed       bool
+	CloseReader  func()
+}
+
+// Stats foo
+func (rbi RemoteBooleanIterator) Stats() influxql.IteratorStats {
+	return rbi.PointDecoder.Stats()
+}
+
+// Close foo
+func (rbi RemoteBooleanIterator) Close() error {
+	rbi.Closed = true
+	rbi.CloseReader()
+	return nil
+}
+
+// Next foo
+func (rbi RemoteBooleanIterator) Next() (*influxql.BooleanPoint, error) {
+	if rbi.Closed {
+		return nil, nil
+	}
+	point, err := getPoint(rbi.PointDecoder)
+	if err != nil || point == nil {
+		rbi.CloseReader()
+		return nil, err
+	}
+	return point.(*influxql.BooleanPoint), nil
+}
+
+func getPoint(dec *influxql.PointDecoder) (influxql.Point, error) {
+	var point influxql.Point
+	err := dec.DecodePoint(&point)
+	if err != nil {
+		if err == io.EOF {
+			return nil, nil
 		}
-		backoff := (math.Pow(2, float64(attempt)) - 1) / 2
-		time.Sleep(time.Duration(backoff) * time.Second)
+		log.Printf("Error while decoding point: %s", err.Error())
+		return nil, err
 	}
-	log.Printf("Error while connecting to Clusterflux: %s", err.Error())
-	return resp, err
+	return point, nil
 }
