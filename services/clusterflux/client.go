@@ -105,12 +105,12 @@ func (c *Client) Open() error {
 	if err != nil {
 		return err
 	}
-	c.logger.Println("setting up node")
+	c.logger.Println("Setting up node")
 	err = c.nodeSetup()
 	if err != nil {
 		return err
 	}
-	c.logger.Println("finished setting up node")
+	c.logger.Println("Finished setting up node")
 
 	go c.heartbeat()
 	go c.startClusterSync()
@@ -510,9 +510,7 @@ func (c *Client) updateData(response ClusterResponse) (meta.Data, error) {
 	if err != nil {
 		return meta.Data{}, err
 	}
-	// c.mutex.Lock()
 	err = c.Client.SetData(&tempData)
-	// c.mutex.Unlock()
 	if err != nil {
 		return meta.Data{}, err
 	}
@@ -698,9 +696,6 @@ func (c *Client) ping() (ClusterResponse, error) {
 	response, err := c.readResponse(resp)
 	c.logger.Println("response status :", response.Status)
 	c.logger.Println("response body :", string(response.Body))
-
-	//b := ioutil.ReadAll(response.Body)
-	//c.logger.Println(b)
 	return response, err
 }
 

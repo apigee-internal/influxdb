@@ -5,10 +5,12 @@ import (
 	"github.com/influxdata/influxdb/services/meta"
 )
 
+// QueryAuthorizer foo
 type QueryAuthorizer struct {
 	*meta.QueryAuthorizer
 }
 
+// NewQueryAuthorizer foo
 func NewQueryAuthorizer(c *Client) *QueryAuthorizer {
 	return &QueryAuthorizer{
 		QueryAuthorizer: meta.NewQueryAuthorizer(c.Client),

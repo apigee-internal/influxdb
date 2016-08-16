@@ -61,17 +61,16 @@ func (s *TSDBStore) CreateShard(database, retentionPolicy string, shardID uint64
 	}
 
 	for _, owner := range owners {
-		s.Logger.Printf("owner.NodeID=%d, s.Client.ID=%d", owner.NodeID, s.Client.ID)
 		if owner.NodeID == s.Client.ID {
-			s.Logger.Printf("Calling actual CreateShard with ShardID=%d", shardID)
 			err = s.Store.CreateShard(database, retentionPolicy, shardID, enabled)
 			if err != nil {
+				s.Logger.Printf("Error creating shard on local node. Error: %s", err.Error())
 				return err
 			}
 		} else {
-			s.Logger.Printf("Calling remote CreateShard with ShardID=%d", shardID)
 			err = s.CreateShardOnNode(nodes[owner.NodeID], database, retentionPolicy, shardID, enabled)
 			if err != nil {
+				s.Logger.Printf("Error creating shard on remote node. Error: %s", err.Error())
 				return nil
 			}
 		}
@@ -88,6 +87,11 @@ func (s *TSDBStore) WriteToShard(shardID uint64, points []models.Point) error {
 	if err != nil {
 		return err
 	}
+	// The commented out code is used to parallelize the write.
+	// We would need to use channels for communication of err when we implement this.
+	// The error needs to be sent to the caller in order to call create shard in case
+	// shard doesn't exist.
+
 	// wg := sync.WaitGroup{}
 	// defer wg.Wait()
 
@@ -95,16 +99,13 @@ func (s *TSDBStore) WriteToShard(shardID uint64, points []models.Point) error {
 		// wg.Add(1)
 		// go func(owner meta.ShardOwner) error {
 		// defer wg.Done()
-		s.Logger.Printf("owner.NodeID=%d, s.Client.ID=%d", owner.NodeID, s.Client.ID)
 		if owner.NodeID == s.Client.ID {
-			s.Logger.Printf("Calling actual WriteToShard with ShardID=%d", shardID)
 			err = s.Store.WriteToShard(shardID, points)
 		} else {
-			s.Logger.Printf("Calling remote WriteToShard with ShardID=%d", shardID)
 			err = s.WriteToShardOnNode(nodes[owner.NodeID], shardID, points)
 		}
 		if err != nil {
-			s.Logger.Printf("failed to write: %s", err.Error())
+			s.Logger.Printf("Failed to write: %s", err.Error())
 			return err
 		}
 		// }(owner)
@@ -124,6 +125,7 @@ func (s *TSDBStore) CreateShardLocal(w http.ResponseWriter, r *http.Request) {
 	}
 	err = proto.Unmarshal(reqBody, &cmd)
 	if err != nil {
+		log.Printf("Failed while unmarshaling received http body: %s", err.Error())
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -150,6 +152,7 @@ func (s *TSDBStore) WriteToShardLocal(w http.ResponseWriter, r *http.Request) {
 	}
 	err = proto.Unmarshal(reqBody, &cmd)
 	if err != nil {
+		log.Printf("Failed while unmarshaling received http body: %s", err.Error())
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -239,30 +242,24 @@ func (ic *remoteShardIteratorCreator) ExpandSources(sources influxql.Sources) (i
 
 //IteratorCreator foo
 func (s *TSDBStore) IteratorCreator(shards []meta.ShardInfo, opt *influxql.SelectOptions) (influxql.IteratorCreator, error) {
-	s.Logger.Println("Inside tsdb IteratorCreator")
 	var localShardIDs []uint64
 	var ics []influxql.IteratorCreator
 	for _, sh := range shards {
 		isRemote := 1
 		for _, owner := range sh.Owners {
-			s.Logger.Printf("LocalID=%d, ownerID=%d, shardID=%d", s.Client.ID, owner.NodeID, sh.ID)
 			if owner.NodeID == s.Client.ID {
-				s.Logger.Printf("local Shard: %d, node: %d", sh.ID, owner.NodeID)
 				localShardIDs = append(localShardIDs, sh.ID)
 				isRemote = 0
 				break
 			}
 		}
 		if isRemote == 1 {
-			s.Logger.Printf("Shard Owners=%+v", sh)
-			s.Logger.Printf("remote Shard: %d, node: %d", sh.ID, sh.Owners[0].NodeID)
 			ric := &remoteShardIteratorCreator{sh: &RemoteIteratorCreator{Store: s, ShardID: sh.ID, NodeID: sh.Owners[0].NodeID}}
 			ics = append(ics, ric)
 		}
 	}
 
 	if err := func() error {
-		s.Logger.Printf("localShardIDs: %+v", localShardIDs)
 		for _, id := range localShardIDs {
 			lic := s.Store.ShardIteratorCreator(id)
 			if lic == nil {
@@ -275,15 +272,12 @@ func (s *TSDBStore) IteratorCreator(shards []meta.ShardInfo, opt *influxql.Selec
 		influxql.IteratorCreators(ics).Close()
 		return nil, err
 	}
-	s.Logger.Printf("Returning %+v", ics)
 	return influxql.IteratorCreators(ics), nil
 }
 
 // ReadShardToRemote foo
 func (s *TSDBStore) ReadShardToRemote(w http.ResponseWriter, r *http.Request) {
-	s.Logger.Println("Serving http ReadShardToRemote request")
 	var buf bytes.Buffer
-
 	cmd := ReadShardCommand{}
 	reqBody, err := ioutil.ReadAll(r.Body)
 	defer r.Body.Close()
@@ -295,6 +289,7 @@ func (s *TSDBStore) ReadShardToRemote(w http.ResponseWriter, r *http.Request) {
 
 	err = proto.Unmarshal(reqBody, &cmd)
 	if err != nil {
+		log.Printf("Failed while unmarshaling received http body: %s", err.Error())
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -308,8 +303,6 @@ func (s *TSDBStore) ReadShardToRemote(w http.ResponseWriter, r *http.Request) {
 	}
 
 	shard := s.Store.Shard(cmd.ShardID)
-
-	s.Logger.Printf("***ShardID=%d, shard=%v", cmd.ShardID, shard)
 	iter, err := shard.CreateIterator(*opt)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -317,7 +310,6 @@ func (s *TSDBStore) ReadShardToRemote(w http.ResponseWriter, r *http.Request) {
 	}
 
 	enc := influxql.NewIteratorEncoder(&buf)
-
 	err = enc.EncodeIterator(iter)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -337,20 +329,16 @@ func (s *TSDBStore) ReadShardToRemote(w http.ResponseWriter, r *http.Request) {
 	case influxql.BooleanIterator:
 		iterType = ReadShardCommandResponse_BOOLEAN
 	default:
-		http.Error(w, fmt.Sprintf("unsupported iterator for encoder: %T", iter), http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("Unsupported iterator for encoder: %T", iter), http.StatusBadRequest)
 		return
 	}
 
 	resp := &ReadShardCommandResponse{ShardID: shardID, Type: iterType, Points: buf.Bytes()}
-	// log.Printf("shard read = %s", buf.String())
-
 	data, err := proto.Marshal(resp)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-
-	s.Logger.Println("Returning from http ReadShardToRemote")
 	w.Write(data)
 }
 
@@ -367,12 +355,12 @@ func (s *TSDBStore) FieldDimensions(w http.ResponseWriter, r *http.Request) {
 
 	err = proto.Unmarshal(reqBody, cmd)
 	if err != nil {
+		log.Printf("Failed while unmarshaling received http body: %s", err.Error())
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	shard := s.Store.Shard(cmd.ShardID)
-	s.Logger.Printf("***ShardID=%d, shard=%v", cmd.ShardID, shard)
 
 	var sources influxql.Sources
 	err = sources.UnmarshalBinary(cmd.Sources)
@@ -398,8 +386,6 @@ func (s *TSDBStore) FieldDimensions(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-
-	s.Logger.Println("Returning from http FieldDimensions")
 	w.Write(data)
 }
 
@@ -416,12 +402,12 @@ func (s *TSDBStore) ExpandSources(w http.ResponseWriter, r *http.Request) {
 
 	err = proto.Unmarshal(reqBody, cmd)
 	if err != nil {
+		log.Printf("Failed while unmarshaling received http body: %s", err.Error())
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	shard := s.Store.Shard(cmd.ShardID)
-	s.Logger.Printf("***ShardID=%d, shard=%v", cmd.ShardID, shard)
 
 	var sources influxql.Sources
 	err = sources.UnmarshalBinary(cmd.Sources)
@@ -430,9 +416,7 @@ func (s *TSDBStore) ExpandSources(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := &ExpandSourcesCommandResponse{}
-
 	respSources, err := shard.ExpandSources(sources)
-
 	if err != nil {
 		resp.Error = err.Error()
 	} else {
@@ -448,7 +432,5 @@ func (s *TSDBStore) ExpandSources(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-
-	s.Logger.Println("Returning from http ExpandSources")
 	w.Write(data)
 }

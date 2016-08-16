@@ -3,7 +3,7 @@ package cflux
 // Config represents the meta configuration.
 type Config struct {
 	Dir            string `toml:"dir"`
-	CFLUX_ENDPOINT string `toml:"cflux_endpoint"`
+	CFLUX_ENDPOINT string `toml:"cfluxEndpoint"`
 	CLUSTER        string `toml:"cluster"`
 }
 

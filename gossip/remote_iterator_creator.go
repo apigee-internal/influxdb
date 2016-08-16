@@ -22,7 +22,6 @@ type RemoteIteratorCreator struct {
 	Store   *TSDBStore
 	ShardID uint64
 	NodeID  uint64
-	// ShardIDs []uint64
 }
 
 // NodesList is used to return list of nodes
@@ -37,11 +36,9 @@ type NodesList struct {
 // CreateIterator Creates a simple iterator for use in an InfluxQL query for the remote node
 func (ric *RemoteIteratorCreator) CreateIterator(opt influxql.IteratorOptions) (influxql.Iterator, error) {
 	aliveNodes, err := AliveNodesMap()
-	log.Printf("************* NodeID = %d, aliveNodes = %+v", ric.NodeID, aliveNodes[ric.NodeID])
-
 	optBinary, err := opt.MarshalBinary()
 	if err != nil {
-		log.Printf("Error while marshaling IteratorOptions: %s", err.Error())
+		log.Printf("[RemoteIteratorCreator] Error while marshaling IteratorOptions: %s", err.Error())
 		return nil, err
 	}
 
@@ -49,10 +46,9 @@ func (ric *RemoteIteratorCreator) CreateIterator(opt influxql.IteratorOptions) (
 		ShardID:         ric.ShardID,
 		IteratorOptions: optBinary,
 	}
-
 	data, err := proto.Marshal(cmd)
 	if err != nil {
-		log.Printf("Error while marshaling ReadShardCommand: %s", err.Error())
+		log.Printf("[RemoteIteratorCreator] Error while marshaling ReadShardCommand: %s", err.Error())
 		return nil, err
 	}
 
@@ -63,7 +59,7 @@ func (ric *RemoteIteratorCreator) CreateIterator(opt influxql.IteratorOptions) (
 
 	resp, err := ExpBackoffRequest(f)
 	if err != nil {
-		log.Printf("Failed to read shards from remote node with ID: %d", ric.NodeID)
+		log.Printf("[RemoteIteratorCreator] Failed to read shards from remote node with ID: %d", ric.NodeID)
 		return nil, err
 	}
 
@@ -71,12 +67,12 @@ func (ric *RemoteIteratorCreator) CreateIterator(opt influxql.IteratorOptions) (
 	respBody, err := ioutil.ReadAll(resp.Body)
 	defer resp.Body.Close()
 	if err != nil {
-		log.Printf("Failed while reading received http body: %s", err.Error())
+		log.Printf("[RemoteIteratorCreator] Failed while reading received http body: %s", err.Error())
 		return nil, err
 	}
 	err = proto.Unmarshal(respBody, respMessage)
 	if err != nil {
-		log.Printf("Error while unmarshaling response: %s", err.Error())
+		log.Printf("[RemoteIteratorCreator] Error while unmarshaling response: %s", err.Error())
 		return nil, err
 	}
 
@@ -93,7 +89,7 @@ func (ric *RemoteIteratorCreator) CreateIterator(opt influxql.IteratorOptions) (
 	case ReadShardCommandResponse_BOOLEAN:
 		iter = &RemoteBooleanIterator{PointDecoder: dec, Closed: false}
 	default:
-		return nil, fmt.Errorf("Unsupported iterator type: %d", iterType)
+		return nil, fmt.Errorf("[RemoteIteratorCreator] Unsupported iterator type: %d", iterType)
 	}
 
 	return iter, nil
@@ -108,7 +104,7 @@ func (ric *RemoteIteratorCreator) FieldDimensions(sources influxql.Sources) (fie
 	fdc := &FieldDimensionsCommand{ShardID: ric.ShardID, Sources: sourceBinary}
 	fdcBinary, err := proto.Marshal(fdc)
 	if err != nil {
-		log.Printf("Error while marshaling FieldDimensionsCommand: %s", err.Error())
+		log.Printf("[RemoteIteratorCreator] Error while marshaling FieldDimensionsCommand: %s", err.Error())
 		return nil, nil, err
 	}
 
@@ -117,7 +113,6 @@ func (ric *RemoteIteratorCreator) FieldDimensions(sources influxql.Sources) (fie
 		return nil, nil, err
 	}
 	f := func() (*http.Request, error) {
-		log.Printf("ric.NodeID=%d, aliveNodes[ric.NodeID]=%+v", ric.NodeID, aliveNodes[ric.NodeID])
 		url := "http://" + aliveNodes[ric.NodeID].BindAddress + "/fielddimensions"
 		return http.NewRequest("POST", url, bytes.NewBuffer(fdcBinary))
 	}
@@ -131,12 +126,12 @@ func (ric *RemoteIteratorCreator) FieldDimensions(sources influxql.Sources) (fie
 	respBody, err := ioutil.ReadAll(resp.Body)
 	defer resp.Body.Close()
 	if err != nil {
-		log.Printf("Failed while reading received http body: %s", err.Error())
+		log.Printf("[RemoteIteratorCreator] Failed while reading received http body: %s", err.Error())
 		return nil, nil, err
 	}
 	err = proto.Unmarshal(respBody, respMessage)
 	if err != nil {
-		log.Printf("Error while unmarshaling response: %s", err.Error())
+		log.Printf("[RemoteIteratorCreator] Error while unmarshaling response: %s", err.Error())
 		return nil, nil, err
 	}
 
@@ -166,7 +161,7 @@ func (ric *RemoteIteratorCreator) ExpandSources(sources influxql.Sources) (influ
 	cmd := &ExpandSourcesCommand{ShardID: ric.ShardID, Sources: sourceBinary}
 	cmdBinary, err := proto.Marshal(cmd)
 	if err != nil {
-		log.Printf("Error while marshaling ExpandSourcesCommand: %s", err.Error())
+		log.Printf("[RemoteIteratorCreator] Error while marshaling ExpandSourcesCommand: %s", err.Error())
 		return nil, err
 	}
 
@@ -188,12 +183,12 @@ func (ric *RemoteIteratorCreator) ExpandSources(sources influxql.Sources) (influ
 	respBody, err := ioutil.ReadAll(resp.Body)
 	defer resp.Body.Close()
 	if err != nil {
-		log.Printf("Failed while reading received http body: %s", err.Error())
+		log.Printf("[RemoteIteratorCreator] Failed while reading received http body: %s", err.Error())
 		return nil, err
 	}
 	err = proto.Unmarshal(respBody, respMessage)
 	if err != nil {
-		log.Printf("Error while unmarshaling response: %s", err.Error())
+		log.Printf("[RemoteIteratorCreator] Error while unmarshaling response: %s", err.Error())
 		return nil, err
 	}
 	if respMessage.Error != "" {
@@ -226,7 +221,6 @@ func AliveNodesMap() (map[uint64]NodesList, error) {
 	}
 	for _, node := range nodeList {
 		nodeMap[node.ID] = node
-		log.Printf("***** assign alive to %d = %+v", node.ID, node)
 	}
 	return nodeMap, nil
 }
@@ -240,7 +234,6 @@ func ExpBackoffRequest(f func() (*http.Request, error)) (*http.Response, error) 
 
 	for attempt := 1; attempt < 6; attempt++ {
 		req, err = f()
-		// log.Printf("req=%+v", req)
 		if err != nil {
 			return nil, err
 		}
@@ -251,6 +244,6 @@ func ExpBackoffRequest(f func() (*http.Request, error)) (*http.Response, error) 
 		backoff := (math.Pow(2, float64(attempt)) - 1) / 2
 		time.Sleep(time.Duration(backoff) * time.Second)
 	}
-	log.Printf("Error while connecting to Clusterflux: %s", err.Error())
+	log.Printf("[RemoteIteratorCreator] Error while connecting to Clusterflux: %s", err.Error())
 	return resp, err
 }
