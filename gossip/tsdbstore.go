@@ -182,7 +182,7 @@ func (s *TSDBStore) WriteToShardLocal(w http.ResponseWriter, r *http.Request) {
 
 // CreateShardOnNode foo
 func (s *TSDBStore) CreateShardOnNode(node cflux.NodesList, database string, retentionPolicy string, shardID uint64, enabled bool) error {
-	url := "http://" + node.BindAddr + "/create"
+	url := "http://" + node.BindAddress + "/create"
 	cmd := &CreateShardCommmand{Database: database,
 		RetentionPolicy: retentionPolicy,
 		ShardID:         shardID,
@@ -217,7 +217,7 @@ func (s *TSDBStore) WriteToShardOnNode(node cflux.NodesList, shardID uint64, poi
 	data, err := proto.Marshal(cmd)
 
 	f := func() (*http.Request, error) {
-		url := "http://" + node.BindAddr + "/write"
+		url := "http://" + node.BindAddress + "/write"
 		return http.NewRequest("POST", url, bytes.NewBuffer(data))
 	}
 
@@ -254,6 +254,7 @@ func (s *TSDBStore) IteratorCreator(shards []meta.ShardInfo, opt *influxql.Selec
 	for _, sh := range shards {
 		isRemote := 1
 		for _, owner := range sh.Owners {
+			s.Logger.Printf("LocalID=%d, ownerID=%d, shardID=%d", s.Client.ID, owner.NodeID, sh.ID)
 			if owner.NodeID == s.Client.ID {
 				s.Logger.Printf("local Shard: %d, node: %d", sh.ID, owner.NodeID)
 				localShardIDs = append(localShardIDs, sh.ID)
@@ -315,6 +316,7 @@ func (s *TSDBStore) ReadShardToRemote(w http.ResponseWriter, r *http.Request) {
 
 	shard := s.Store.Shard(cmd.ShardID)
 
+	s.Logger.Printf("***ShardID=%d, shard=%v", cmd.ShardID, shard)
 	iter, err := shard.CreateIterator(*opt)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -377,6 +379,7 @@ func (s *TSDBStore) FieldDimensions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	shard := s.Store.Shard(cmd.ShardID)
+	s.Logger.Printf("***ShardID=%d, shard=%v", cmd.ShardID, shard)
 
 	var sources influxql.Sources
 	err = sources.UnmarshalBinary(cmd.Sources)
@@ -425,6 +428,7 @@ func (s *TSDBStore) ExpandSources(w http.ResponseWriter, r *http.Request) {
 	}
 
 	shard := s.Store.Shard(cmd.ShardID)
+	s.Logger.Printf("***ShardID=%d, shard=%v", cmd.ShardID, shard)
 
 	var sources influxql.Sources
 	err = sources.UnmarshalBinary(cmd.Sources)

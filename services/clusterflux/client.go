@@ -48,14 +48,15 @@ type ClusterResponse struct {
 
 // Metadata struct used to register influxdb node
 type Metadata struct {
-	IP       string `json:"ip"`
-	Hostname string `json:"hostname"`
+	IP          string `json:"ip"`
+	Hostname    string `json:"hostname"`
+	BindAddress string `json:"bindAddress"`
 }
 
 // Response used to parse response from Clusterflux for Nodes metadata
 type Response struct {
 	Status  string   `json:"status"`
-	Id      uint64   `json:"id"`
+	ID      uint64   `json:"id"`
 	Exp     string   `json:"expirationDate"`
 	Message string   `json:"message"`
 	Mdata   Metadata `json:"metadata"`
@@ -63,13 +64,14 @@ type Response struct {
 
 // NodesList is used to return list of nodes
 type NodesList struct {
-	ID       uint64 `json:"id"`
-	IP       string `json:"ip"`
-	Hostname string `json:"hostname"`
-	BindAddr string `json:"bind-address"`
-	Alive    bool   `json:"alive"`
+	ID          uint64 `json:"id"`
+	IP          string `json:"ip"`
+	Hostname    string `json:"hostname"`
+	BindAddress string `json:"bindAddress"`
+	Alive       bool   `json:"alive"`
 }
 
+// Page foo
 type Page struct {
 	ID uint64 `json:"id"`
 }
@@ -110,6 +112,7 @@ func (c *Client) Open() error {
 	}
 	c.logger.Println("finished setting up node")
 
+	go c.heartbeat()
 	go c.startClusterSync()
 	return nil
 }
@@ -630,7 +633,6 @@ func (c *Client) readResponse(resp *http.Response) (ClusterResponse, error) {
 }
 
 func (c *Client) registerNode() error {
-
 	mdata := c.getNodeMetaData()
 	data, err := json.Marshal(mdata)
 	if err != nil {
@@ -645,7 +647,7 @@ func (c *Client) registerNode() error {
 	}
 	clusterResp := Response{}
 	json.NewDecoder(resp.Body).Decode(&clusterResp)
-	c.ID = clusterResp.Id
+	c.ID = clusterResp.ID
 	if err != nil {
 		return err
 	}
@@ -653,7 +655,6 @@ func (c *Client) registerNode() error {
 	if err != nil {
 		return err
 	}
-	go c.heartbeat(clusterResp.Id)
 	return nil
 }
 
@@ -674,14 +675,15 @@ func (c *Client) getNodeMetaData() Metadata {
 		}
 	}
 	ip := buffer.String()
-	return Metadata{ip, hostname}
+	bindaddress := viper.GetString("BIND_ADDRESS")
+	return Metadata{ip, hostname, bindaddress}
 }
 
-func (c *Client) heartbeat(id uint64) {
+func (c *Client) heartbeat() {
 	var err error
 	for err == nil {
 		time.Sleep(5 * time.Second)
-		_, err = c.ping(id)
+		_, err = c.ping()
 		if err != nil {
 			c.logger.Println("Failed to Register InfluxDB on Clusterflux")
 			c.errorCh <- err
@@ -689,8 +691,8 @@ func (c *Client) heartbeat(id uint64) {
 	}
 }
 
-func (c *Client) ping(id uint64) (ClusterResponse, error) {
-	url := viper.GetString("CFLUX_ENDPOINT") + "/nodes/" + viper.GetString("CLUSTER") + "/" + strconv.FormatUint(id, 10)
+func (c *Client) ping() (ClusterResponse, error) {
+	url := viper.GetString("CFLUX_ENDPOINT") + "/nodes/" + viper.GetString("CLUSTER") + "/" + strconv.FormatUint(c.ID, 10)
 	req, err := http.NewRequest("PUT", url, nil)
 	resp, err := c.ExpBackoffRequest(*req)
 	response, err := c.readResponse(resp)
@@ -728,15 +730,16 @@ func (c *Client) nodeID() (uint64, error) {
 }
 
 func (c *Client) nodeSetup() error {
-	ID, err := c.nodeID()
-	if ID == 0 || err != nil {
+	var err error
+	c.ID, err = c.nodeID()
+	if c.ID == 0 || err != nil {
 		c.logger.Println("Previous NodeID not found, registering node and assigning new ID")
 		err = c.registerNode()
 		if err != nil {
 			return err
 		}
 	}
-	resp, err := c.ping(ID)
+	resp, err := c.ping()
 	if err != nil {
 		return err
 	}
