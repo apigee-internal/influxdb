@@ -9,7 +9,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"sync"
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/influxdata/influxdb/influxql"
@@ -80,11 +79,6 @@ func (s *TSDBStore) CreateShard(database, retentionPolicy string, shardID uint64
 	return nil
 }
 
-// // CreateShard creates a shard with the given id and retention policy on a database.
-// func (s *TSDBStore) CreateShard(database, retentionPolicy string, shardID uint64, enabled bool) error {
-// 	return s.Store.CreateShard(database, retentionPolicy, shardID, enabled)
-// }
-
 // WriteToShard writes a list of points to a shard identified by its ID.
 func (s *TSDBStore) WriteToShard(shardID uint64, points []models.Point) error {
 	_, _, sgi := s.Client.ShardOwner(shardID)
@@ -94,30 +88,28 @@ func (s *TSDBStore) WriteToShard(shardID uint64, points []models.Point) error {
 	if err != nil {
 		return err
 	}
-	wg := sync.WaitGroup{}
-	defer wg.Wait()
+	// wg := sync.WaitGroup{}
+	// defer wg.Wait()
 
 	for _, owner := range owners {
-		wg.Add(1)
-		go func(owner meta.ShardOwner) error {
-			defer wg.Done()
-			s.Logger.Printf("owner.NodeID=%d, s.Client.ID=%d", owner.NodeID, s.Client.ID)
-			if owner.NodeID == s.Client.ID {
-				s.Logger.Printf("Callin	g actual WriteToShard with ShardID=%d", shardID)
-				err = s.Store.WriteToShard(shardID, points)
-				if err != nil {
-					return err
-				}
-			}
+		// wg.Add(1)
+		// go func(owner meta.ShardOwner) error {
+		// defer wg.Done()
+		s.Logger.Printf("owner.NodeID=%d, s.Client.ID=%d", owner.NodeID, s.Client.ID)
+		if owner.NodeID == s.Client.ID {
+			s.Logger.Printf("Calling actual WriteToShard with ShardID=%d", shardID)
+			err = s.Store.WriteToShard(shardID, points)
+		} else {
 			s.Logger.Printf("Calling remote WriteToShard with ShardID=%d", shardID)
 			err = s.WriteToShardOnNode(nodes[owner.NodeID], shardID, points)
-			if err != nil {
-				return err
-			}
-			return nil
-		}(owner)
+		}
+		if err != nil {
+			s.Logger.Printf("failed to write: %s", err.Error())
+			return err
+		}
+		// }(owner)
 	}
-	return nil
+	return err
 }
 
 // CreateShardLocal foo
@@ -250,7 +242,6 @@ func (s *TSDBStore) IteratorCreator(shards []meta.ShardInfo, opt *influxql.Selec
 	s.Logger.Println("Inside tsdb IteratorCreator")
 	var localShardIDs []uint64
 	var ics []influxql.IteratorCreator
-	ics = make([]influxql.IteratorCreator, 0)
 	for _, sh := range shards {
 		isRemote := 1
 		for _, owner := range sh.Owners {
@@ -271,6 +262,7 @@ func (s *TSDBStore) IteratorCreator(shards []meta.ShardInfo, opt *influxql.Selec
 	}
 
 	if err := func() error {
+		s.Logger.Printf("localShardIDs: %+v", localShardIDs)
 		for _, id := range localShardIDs {
 			lic := s.Store.ShardIteratorCreator(id)
 			if lic == nil {
@@ -283,7 +275,7 @@ func (s *TSDBStore) IteratorCreator(shards []meta.ShardInfo, opt *influxql.Selec
 		influxql.IteratorCreators(ics).Close()
 		return nil, err
 	}
-	s.Logger.Println("Returning")
+	s.Logger.Printf("Returning %+v", ics)
 	return influxql.IteratorCreators(ics), nil
 }
 

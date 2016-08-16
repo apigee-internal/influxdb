@@ -242,7 +242,7 @@ func ExpBackoffRequest(f func() (*http.Request, error)) (*http.Response, error) 
 
 	for attempt := 1; attempt < 6; attempt++ {
 		req, err = f()
-		log.Printf("req=%+v", req)
+		// log.Printf("req=%+v", req)
 		if err != nil {
 			return nil, err
 		}
