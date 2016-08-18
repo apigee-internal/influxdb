@@ -31,20 +31,18 @@ reporting-disabled = false
   # The default duration for leases.
   lease-duration = "1m0s"
 
-  ###
-  ### [cflux]
-  ###
-  ### Controls the parameters the clusterflux service
-  ###
-  ###
+###
+### [clusterflux]
+###
+### Controls the parameters for the clusterflux service
+###
 
-[cflux]
-    #Controls the parameters the clusterflux service
-    dir = "/var/lib/influxdb/cflux"
-
-    cflux_endpoint = "http://localhost:8000"
-
-    cluster = "default"
+[clusterflux]
+  # Where the clusterflux configuration is stored
+  dir = "/var/lib/influxdb/clusterflux"
+  clusterflux-endpoint = "http://localhost:8000"
+  cluster-name = "default"
+  bind-address = "http://localhost:8888"
 
 ###
 ### [data]

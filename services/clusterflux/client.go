@@ -19,8 +19,6 @@ import (
 
 	"github.com/influxdata/influxdb/influxql"
 	"github.com/influxdata/influxdb/services/meta"
-
-	"github.com/spf13/viper"
 )
 
 // Client is used as a wrapper on meta client to execute
@@ -30,13 +28,16 @@ type Client struct {
 	// Version tracks current version of the cluster
 	dataVersion string
 	// mutex is used to lock write (local and to cluster)
-	mutex       *sync.Mutex
-	logger      *log.Logger
-	doneCh      chan struct{}
-	errorCh     chan error
-	nodePointer int
-	ID          uint64
-	path        string
+	mutex               *sync.Mutex
+	logger              *log.Logger
+	doneCh              chan struct{}
+	errorCh             chan error
+	nodePointer         int
+	ID                  uint64
+	path                string
+	clusterName         string
+	clusterfluxEndpoint string
+	bindAddress         string
 }
 
 // ClusterResponse used to parse response from Clusterflux
@@ -78,20 +79,18 @@ type Page struct {
 
 // NewClient returns a new *Client.
 func NewClient(metaConfig *meta.Config, cfluxConfig *Config) *Client {
-	viper.SetConfigName("config")            //need to figure out where config file will sit
-	viper.AddConfigPath("/etc/clusterflux/") //assign default path
-	viper.SetDefault("CFLUX_ENDPOINT", "http://localhost:8000")
-	viper.SetDefault("CLUSTER", "default")
-	viper.AutomaticEnv()
 	return &Client{
-		Client:      meta.NewClient(metaConfig),
-		dataVersion: "0",
-		mutex:       &sync.Mutex{},
-		logger:      log.New(os.Stderr, "[clusterflux] ", log.LstdFlags),
-		nodePointer: 0,
-		doneCh:      make(chan struct{}),
-		errorCh:     make(chan error),
-		path:        cfluxConfig.Dir,
+		Client:              meta.NewClient(metaConfig),
+		dataVersion:         "0",
+		mutex:               &sync.Mutex{},
+		logger:              log.New(os.Stderr, "[clusterflux] ", log.LstdFlags),
+		nodePointer:         0,
+		doneCh:              make(chan struct{}),
+		errorCh:             make(chan error),
+		path:                cfluxConfig.Dir,
+		clusterfluxEndpoint: cfluxConfig.ClusterfluxEndpoint,
+		clusterName:         cfluxConfig.ClusterName,
+		bindAddress:         cfluxConfig.BindAddress,
 	}
 }
 
@@ -103,7 +102,7 @@ func (c *Client) Open() error {
 	}
 	// This commented out code could be used to avoid key not found logs during a fresh setup of cluster
 	// Commenting it out as it takes a lot of time on kubernetes (works fine on local machine!) Should figure out a better way.
-	// _, err = c.postToCflux(viper.GetString("CLUSTER"))
+	// _, err = c.postToCflux(c.clusterName)
 	// if err != nil {
 	// 	return err
 	// }
@@ -360,7 +359,7 @@ func (c *Client) aliveNodeIDs() ([]uint64, error) {
 
 func (c *Client) aliveNodes() ([]NodesList, error) {
 	f := func() (*http.Request, error) {
-		url := viper.GetString("CFLUX_ENDPOINT") + "/nodes/" + url.QueryEscape(viper.GetString("CLUSTER"))
+		url := c.clusterfluxEndpoint + "/nodes/" + url.QueryEscape(c.clusterName)
 		return http.NewRequest("GET", url, nil)
 	}
 
@@ -379,7 +378,7 @@ func (c *Client) aliveNodes() ([]NodesList, error) {
 // AliveNodesMap foo
 func (c *Client) AliveNodesMap() (map[uint64]NodesList, error) {
 	f := func() (*http.Request, error) {
-		url := viper.GetString("CFLUX_ENDPOINT") + "/nodes/" + url.QueryEscape(viper.GetString("CLUSTER"))
+		url := c.clusterfluxEndpoint + "/nodes/" + url.QueryEscape(c.clusterName)
 		return http.NewRequest("GET", url, nil)
 	}
 
@@ -479,7 +478,7 @@ func (c *Client) ModifyAndSync(f func(c *Client) (interface{}, error)) (interfac
 		// send modified snapshot to cflux
 		var response ClusterResponse
 		c.logger.Println("Posting to Clusterflux")
-		response, err = c.postToCflux(viper.GetString("CLUSTER"))
+		response, err = c.postToCflux(c.clusterName)
 		if err != nil {
 			break
 		}
@@ -535,7 +534,7 @@ func (c *Client) postToCflux(cluster string) (ClusterResponse, error) {
 	}
 
 	f := func() (*http.Request, error) {
-		url := viper.GetString("CFLUX_ENDPOINT") + "/clusters/" + url.QueryEscape(cluster) + "/versions/" + c.dataVersion
+		url := c.clusterfluxEndpoint + "/clusters/" + url.QueryEscape(cluster) + "/versions/" + c.dataVersion
 		return http.NewRequest("POST", url, bytes.NewBuffer(data))
 	}
 
@@ -552,7 +551,7 @@ func (c *Client) postToCflux(cluster string) (ClusterResponse, error) {
 
 func (c *Client) startClusterSync() {
 	c.logger.Printf("Started listening for cluster changes.")
-	go c.syncWithCluster(viper.GetString("CLUSTER"))
+	go c.syncWithCluster(c.clusterName)
 	for {
 		c.logger.Println(<-c.errorCh)
 	}
@@ -581,7 +580,7 @@ func (c *Client) syncWithCluster(cluster string) {
 
 func (c *Client) sync(cluster string) error {
 	f := func() (*http.Request, error) {
-		url := viper.GetString("CFLUX_ENDPOINT") + "/clusters/" + url.QueryEscape(cluster) + "/versions/" + c.dataVersion
+		url := c.clusterfluxEndpoint + "/clusters/" + url.QueryEscape(cluster) + "/versions/" + c.dataVersion
 		return http.NewRequest("GET", url, nil)
 	}
 	c.logger.Println("Polling for updates from Clusterflux.")
@@ -655,7 +654,7 @@ func (c *Client) registerNode() error {
 		return err
 	}
 	f := func() (*http.Request, error) {
-		url := viper.GetString("CFLUX_ENDPOINT") + "/nodes/" + viper.GetString("CLUSTER")
+		url := c.clusterfluxEndpoint + "/nodes/" + c.clusterName
 		return http.NewRequest("POST", url, bytes.NewBuffer(data))
 	}
 
@@ -694,7 +693,7 @@ func (c *Client) getNodeMetaData() Metadata {
 		}
 	}
 	ip := buffer.String()
-	bindaddress := viper.GetString("BIND_ADDRESS")
+	bindaddress := c.bindAddress
 	if bindaddress == "" {
 		bindaddress = addrs[0].To4().String() + ":8888"
 	}
@@ -715,7 +714,7 @@ func (c *Client) heartbeat() {
 
 func (c *Client) ping() (ClusterResponse, error) {
 	f := func() (*http.Request, error) {
-		url := viper.GetString("CFLUX_ENDPOINT") + "/nodes/" + viper.GetString("CLUSTER") + "/" + strconv.FormatUint(c.ID, 10)
+		url := c.clusterfluxEndpoint + "/nodes/" + c.clusterName + "/" + strconv.FormatUint(c.ID, 10)
 		return http.NewRequest("PUT", url, nil)
 	}
 

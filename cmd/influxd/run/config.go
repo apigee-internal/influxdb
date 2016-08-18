@@ -41,7 +41,7 @@ const (
 type Config struct {
 	Meta        *meta.Config       `toml:"meta"`
 	Data        tsdb.Config        `toml:"data"`
-	Cflux       *cflux.Config      `toml:"cflux"`
+	Cflux       *cflux.Config      `toml:"clusterflux"`
 	Coordinator coordinator.Config `toml:"coordinator"`
 	Retention   retention.Config   `toml:"retention"`
 	Precreator  precreator.Config  `toml:"shard-precreation"`
@@ -107,7 +107,7 @@ func NewDemoConfig() (*Config, error) {
 
 	c.Meta.Dir = filepath.Join(homeDir, ".influxdb/meta")
 	c.Data.Dir = filepath.Join(homeDir, ".influxdb/data")
-	c.Cflux.Dir = filepath.Join(homeDir, ".influxdb/cflux")
+	c.Cflux.Dir = filepath.Join(homeDir, ".influxdb/clusterflux")
 	c.Data.WALDir = filepath.Join(homeDir, ".influxdb/wal")
 
 	c.Admin.Enabled = true
