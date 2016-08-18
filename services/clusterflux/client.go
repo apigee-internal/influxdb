@@ -35,9 +35,9 @@ type Client struct {
 	nodePointer         int
 	ID                  uint64
 	path                string
-	clusterName         string
-	clusterfluxEndpoint string
-	bindAddress         string
+	ClusterName         string
+	ClusterfluxEndpoint string
+	BindAddress         string
 }
 
 // ClusterResponse used to parse response from Clusterflux
@@ -88,9 +88,9 @@ func NewClient(metaConfig *meta.Config, cfluxConfig *Config) *Client {
 		doneCh:              make(chan struct{}),
 		errorCh:             make(chan error),
 		path:                cfluxConfig.Dir,
-		clusterfluxEndpoint: cfluxConfig.ClusterfluxEndpoint,
-		clusterName:         cfluxConfig.ClusterName,
-		bindAddress:         cfluxConfig.BindAddress,
+		ClusterfluxEndpoint: cfluxConfig.ClusterfluxEndpoint,
+		ClusterName:         cfluxConfig.ClusterName,
+		BindAddress:         cfluxConfig.BindAddress,
 	}
 }
 
@@ -102,7 +102,7 @@ func (c *Client) Open() error {
 	}
 	// This commented out code could be used to avoid key not found logs during a fresh setup of cluster
 	// Commenting it out as it takes a lot of time on kubernetes (works fine on local machine!) Should figure out a better way.
-	// _, err = c.postToCflux(c.clusterName)
+	// _, err = c.postToCflux(c.ClusterName)
 	// if err != nil {
 	// 	return err
 	// }
@@ -359,7 +359,7 @@ func (c *Client) aliveNodeIDs() ([]uint64, error) {
 
 func (c *Client) aliveNodes() ([]NodesList, error) {
 	f := func() (*http.Request, error) {
-		url := c.clusterfluxEndpoint + "/nodes/" + url.QueryEscape(c.clusterName)
+		url := c.ClusterfluxEndpoint + "/nodes/" + url.QueryEscape(c.ClusterName)
 		return http.NewRequest("GET", url, nil)
 	}
 
@@ -378,7 +378,7 @@ func (c *Client) aliveNodes() ([]NodesList, error) {
 // AliveNodesMap foo
 func (c *Client) AliveNodesMap() (map[uint64]NodesList, error) {
 	f := func() (*http.Request, error) {
-		url := c.clusterfluxEndpoint + "/nodes/" + url.QueryEscape(c.clusterName)
+		url := c.ClusterfluxEndpoint + "/nodes/" + url.QueryEscape(c.ClusterName)
 		return http.NewRequest("GET", url, nil)
 	}
 
@@ -478,7 +478,7 @@ func (c *Client) ModifyAndSync(f func(c *Client) (interface{}, error)) (interfac
 		// send modified snapshot to cflux
 		var response ClusterResponse
 		c.logger.Println("Posting to Clusterflux")
-		response, err = c.postToCflux(c.clusterName)
+		response, err = c.postToCflux(c.ClusterName)
 		if err != nil {
 			break
 		}
@@ -534,7 +534,7 @@ func (c *Client) postToCflux(cluster string) (ClusterResponse, error) {
 	}
 
 	f := func() (*http.Request, error) {
-		url := c.clusterfluxEndpoint + "/clusters/" + url.QueryEscape(cluster) + "/versions/" + c.dataVersion
+		url := c.ClusterfluxEndpoint + "/clusters/" + url.QueryEscape(cluster) + "/versions/" + c.dataVersion
 		return http.NewRequest("POST", url, bytes.NewBuffer(data))
 	}
 
@@ -551,7 +551,7 @@ func (c *Client) postToCflux(cluster string) (ClusterResponse, error) {
 
 func (c *Client) startClusterSync() {
 	c.logger.Printf("Started listening for cluster changes.")
-	go c.syncWithCluster(c.clusterName)
+	go c.syncWithCluster(c.ClusterName)
 	for {
 		c.logger.Println(<-c.errorCh)
 	}
@@ -580,7 +580,7 @@ func (c *Client) syncWithCluster(cluster string) {
 
 func (c *Client) sync(cluster string) error {
 	f := func() (*http.Request, error) {
-		url := c.clusterfluxEndpoint + "/clusters/" + url.QueryEscape(cluster) + "/versions/" + c.dataVersion
+		url := c.ClusterfluxEndpoint + "/clusters/" + url.QueryEscape(cluster) + "/versions/" + c.dataVersion
 		return http.NewRequest("GET", url, nil)
 	}
 	c.logger.Println("Polling for updates from Clusterflux.")
@@ -654,7 +654,7 @@ func (c *Client) registerNode() error {
 		return err
 	}
 	f := func() (*http.Request, error) {
-		url := c.clusterfluxEndpoint + "/nodes/" + c.clusterName
+		url := c.ClusterfluxEndpoint + "/nodes/" + c.ClusterName
 		return http.NewRequest("POST", url, bytes.NewBuffer(data))
 	}
 
@@ -693,7 +693,7 @@ func (c *Client) getNodeMetaData() Metadata {
 		}
 	}
 	ip := buffer.String()
-	bindaddress := c.bindAddress
+	bindaddress := c.BindAddress
 	if bindaddress == "" {
 		bindaddress = addrs[0].To4().String() + ":8888"
 	}
@@ -714,7 +714,7 @@ func (c *Client) heartbeat() {
 
 func (c *Client) ping() (ClusterResponse, error) {
 	f := func() (*http.Request, error) {
-		url := c.clusterfluxEndpoint + "/nodes/" + c.clusterName + "/" + strconv.FormatUint(c.ID, 10)
+		url := c.ClusterfluxEndpoint + "/nodes/" + c.ClusterName + "/" + strconv.FormatUint(c.ID, 10)
 		return http.NewRequest("PUT", url, nil)
 	}
 

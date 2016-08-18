@@ -189,7 +189,7 @@ func (s *TSDBStore) CreateShardOnNode(node cflux.NodesList, database string, ret
 		return http.NewRequest("POST", url, bytes.NewBuffer(data))
 	}
 
-	_, err = ExpBackoffRequest(f)
+	_, err = s.Client.ExpBackoffRequest(f)
 	if err != nil {
 		s.Logger.Printf("Failed to create shard on remote node with ID: %d", node.ID)
 		return err
@@ -219,7 +219,7 @@ func (s *TSDBStore) WriteToShardOnNode(node cflux.NodesList, shardID uint64, poi
 		return http.NewRequest("POST", url, bytes.NewBuffer(data))
 	}
 
-	_, err = ExpBackoffRequest(f)
+	_, err = s.Client.ExpBackoffRequest(f)
 	if err != nil {
 		s.Logger.Printf("Failed to write shard to remote node with ID: %d", node.ID)
 		return err

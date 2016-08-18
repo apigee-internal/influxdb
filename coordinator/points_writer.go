@@ -316,17 +316,12 @@ func (w *PointsWriter) WritePoints(database, retentionPolicy string, consistency
 
 // writeToShards writes points to a shard.
 func (w *PointsWriter) writeToShard(shard *meta.ShardInfo, database, retentionPolicy string, points []models.Point) error {
-	w.Logger.Println("inside coordinator writeToShard")
 	atomic.AddInt64(&w.stats.PointWriteReqLocal, int64(len(points)))
-
-	w.Logger.Println("inside coordinator writeToShard. calling TSDB WriteToShard")
 	err := w.TSDBStore.WriteToShard(shard.ID, points)
 	if err == nil {
-		w.Logger.Println("inside coordinator writeToShard. calling TSDB WriteToShard. err didn't happen")
 		atomic.AddInt64(&w.stats.WriteOK, 1)
 		return nil
 	}
-	w.Logger.Printf("inside coordinator writeToShard. calling TSDB WriteToShard. err happened: %s", err.Error())
 
 	// If we've written to shard that should exist on the current node, but the store has
 	// not actually created this shard, tell it to create it and retry the write
