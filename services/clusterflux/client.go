@@ -100,12 +100,12 @@ func (c *Client) Open() error {
 	if err != nil {
 		return err
 	}
-	// This commented out code could be used to avoid key not found logs during a fresh setup of cluster
-	// Commenting it out as it takes a lot of time on kubernetes (works fine on local machine!) Should figure out a better way.
-	// _, err = c.postToCflux(c.ClusterName)
-	// if err != nil {
-	// 	return err
-	// }
+	// This is used to avoid key not found logs during a fresh setup of cluster
+	// Comment it out if it takes a lot of time on kubernetes
+	_, err = c.postToCflux(c.ClusterName)
+	if err != nil {
+		return err
+	}
 	c.logger.Println("Setting up node")
 	err = c.nodeSetup()
 	if err != nil {
